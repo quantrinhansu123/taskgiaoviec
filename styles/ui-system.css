@@ -1,0 +1,440 @@
+/* ─── Design system — spacing, form, buttons ─── */
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --page-x: 16px;
+  --topbar-pad-top: 12px;
+  --content-max: 1200px;
+  --detail-max: 960px;
+  --split-aside-w: 380px;
+  --control-h: 44px;
+  --r-control: 12px;
+  --r-sheet: 18px;
+}
+
+/* Topbar theo ngữ cảnh */
+.topbar {
+  flex-shrink: 0;
+  padding: var(--topbar-pad-top) var(--page-x) var(--space-3);
+  gap: var(--space-2);
+}
+
+html.layout-preview-mobile .topbar:not(.topbar--panel):not(.topbar--embedded) {
+  --topbar-pad-top: 48px;
+}
+
+html.layout-desktop {
+  --page-x: 28px;
+  --content-max: none;
+  --detail-max: none;
+}
+
+html.layout-desktop .topbar {
+  --topbar-pad-top: 14px;
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+html.layout-native-mobile .topbar {
+  --topbar-pad-top: max(12px, env(safe-area-inset-top, 0px));
+}
+
+.topbar .icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-btn);
+  flex-shrink: 0;
+}
+
+.icon-btn--spacer {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Viewport */
+.app-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Form trong sheet */
+.sheet-body .form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sheet-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 var(--space-2);
+  line-height: 1.45;
+}
+
+.sheet-hint strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.sheet-hint--body {
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.field-datetime-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(108px, 130px);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.field-input--time {
+  text-align: center;
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
+.field-input,
+.sheet-body input[type='text'],
+.sheet-body input[type='date'],
+.sheet-body input[type='time'],
+.sheet-body select,
+.sheet-body textarea {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-control);
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.sheet-body textarea {
+  padding: var(--space-3);
+  min-height: 120px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.field-input:focus,
+.sheet-body input:focus,
+.sheet-body select:focus,
+.sheet-body textarea:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(26, 24, 21, 0.06);
+}
+
+.field-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.form-error {
+  font-size: 12px;
+  color: var(--accent-ink);
+  margin: 0;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-4);
+  border-radius: var(--r-control);
+  border: 1px solid transparent;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s, transform 0.1s;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #2d2a26;
+}
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--ink-2);
+  border-color: var(--line);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: #d7d0c0;
+}
+
+.btn-danger {
+  background: var(--bad);
+  color: #fff;
+  border-color: var(--bad);
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.btn-ghost-danger {
+  background: var(--card);
+  color: var(--accent-ink);
+  border-color: var(--bad-soft);
+}
+
+.btn-ghost-danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+}
+
+.btn-row {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.btn-row .btn-primary {
+  flex: 1;
+}
+
+.btn-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Sheet polish */
+.sheet {
+  font-family: var(--font-body);
+}
+
+.sheet-head {
+  padding: var(--space-2) var(--page-x) var(--space-3);
+  border-bottom: 1px solid var(--line-2);
+}
+
+.sheet-body {
+  padding: var(--space-4) var(--page-x) max(var(--space-6), env(safe-area-inset-bottom, 0px));
+}
+
+.sheet-close {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-btn);
+}
+
+/* Cards & lists */
+.product-card {
+  border-radius: var(--r-card);
+  padding: var(--space-4) 48px var(--space-4) var(--space-4);
+  box-shadow: var(--shadow-card);
+}
+
+.product-card-more {
+  top: var(--space-3);
+  right: var(--space-3);
+  left: auto;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-btn);
+}
+
+.item {
+  border-radius: var(--r-card);
+}
+
+/* Detail helpers */
+.note-add-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  justify-content: flex-start;
+  padding: var(--space-3);
+  margin: 0 var(--page-x);
+  width: calc(100% - var(--page-x) * 2);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-card);
+  color: var(--muted);
+  font-size: 13px;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+.note-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bad-soft);
+}
+
+.assignee-row-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-align: left;
+}
+
+.desktop-add-child-btn {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-control);
+  border: 1px dashed var(--line);
+  background: var(--card);
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.desktop-add-child-btn:hover {
+  border-color: var(--accent);
+  background: var(--bad-soft);
+}
+
+/* Desktop split */
+.desktop-products-split {
+  background: var(--bg-app);
+}
+
+.desktop-split-aside {
+  width: min(var(--split-aside-w), 36vw);
+  min-width: 280px;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+}
+
+.desktop-split-main {
+  background: var(--bg-app);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.desktop-split-main .screen--embedded {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.desktop-split-main .scroll {
+  width: 100%;
+}
+
+.desktop-split-main .topbar {
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.desktop-split-main .topbar.scrolled {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.screen--panel .topbar,
+.screen--embedded .topbar {
+  background: var(--card);
+  border-bottom: 1px solid var(--line-2);
+}
+
+/* Page rhythm */
+.hero,
+.home-hero,
+.person-hero {
+  padding-left: var(--page-x);
+  padding-right: var(--page-x);
+}
+
+.section,
+.filter-row,
+.home-search,
+.home-tabs {
+  padding-left: var(--page-x);
+  padding-right: var(--page-x);
+}
+
+.list {
+  padding-left: var(--page-x);
+  padding-right: var(--page-x);
+}
+
+.product-list,
+.people-list {
+  padding-left: var(--page-x);
+  padding-right: var(--page-x);
+}
+
+/* Căn giữa trang home/people full-width desktop — không dùng padding % */
+.layout-desktop .screen.has-nav .home-hero,
+.layout-desktop .screen.has-nav .home-search,
+.layout-desktop .screen.has-nav .home-tabs,
+.layout-desktop .screen.has-nav .person-hero,
+.layout-desktop .screen.has-nav .people-list {
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+  box-sizing: border-box;
+}
