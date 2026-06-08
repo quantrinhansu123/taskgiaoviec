@@ -1719,22 +1719,22 @@ function SubtasksDashboard({ products, onOpenNode }) {
                   const priority = priorityForWorkItem(it.node);
                   return (
                     <tr key={it.node.id} onClick={() => onOpenNode(it.node.id)}>
-                      <td><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
-                      <td><div className="subtasks-table-title">{it.featureName || 'Chưa có hạng mục'}</div></td>
-                      <td><div className="subtasks-table-title">{it.parentTaskName || 'Chưa có công việc'}</div></td>
-                      <td><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">Hoàn thành: {formatCompletedAt(it.node.completedAt)}</div>}</td>
-                      <td>{assignees || 'Chưa gán'}</td>
-                      <td><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
-                      <td><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
-                      <td>
+                      <td data-label="Dự án"><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
+                      <td data-label="Hạng mục"><div className="subtasks-table-title">{it.featureName || 'Chưa có hạng mục'}</div></td>
+                      <td data-label="Công việc"><div className="subtasks-table-title">{it.parentTaskName || 'Chưa có công việc'}</div></td>
+                      <td data-label="Sub task"><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">Hoàn thành: {formatCompletedAt(it.node.completedAt)}</div>}</td>
+                      <td data-label="Người phụ trách">{assignees || 'Chưa gán'}</td>
+                      <td data-label="Ưu tiên"><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
+                      <td data-label="Deadline"><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
+                      <td data-label="Tiến độ">
                         <div className="task-progress-cell">
                           <div className="task-progress-text">{taskProgress.pct}%</div>
                           <div className="task-progress-track"><span style={{ width: `${taskProgress.pct}%` }} /></div>
                           <div className="subtasks-table-sub">{taskProgress.done}/{taskProgress.total} sub task xong</div>
                         </div>
                       </td>
-                      <td>{formatDurationMinutes(mins) || '0 phút'}</td>
-                      <td><StatusChip status={it.node.status}/></td>
+                      <td data-label="Thời gian">{formatDurationMinutes(mins) || '0 phút'}</td>
+                      <td data-label="Trạng thái"><StatusChip status={it.node.status}/></td>
                     </tr>
                   );
                 })}
