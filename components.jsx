@@ -133,7 +133,7 @@ function shade(hex, pct) {
   return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
 }
 
-function PhotoThumb({ photo, onClick }) {
+function PhotoThumb({ photo, onClick, onView }) {
   const thumbStyle = photo.url
     ? {
         backgroundImage: `url(${photo.url})`,
@@ -143,10 +143,26 @@ function PhotoThumb({ photo, onClick }) {
       }
     : { background: photoBg(photo.tint) };
 
+  const handleView = (e) => {
+    e.stopPropagation();
+    (onView || onClick)?.(photo);
+  };
+
   return (
     <div className="photo" onClick={onClick}>
       <div className="thumb" style={thumbStyle}>
         {photo.kind === 'bad' && <span className="badge-bad">Lỗi</span>}
+        {photo.url && (onView || onClick) && (
+          <button
+            type="button"
+            className="photo-view-btn"
+            aria-label="Xem ảnh full"
+            title="Xem ảnh full"
+            onClick={handleView}
+          >
+            <Icon.eye />
+          </button>
+        )}
       </div>
       <div className="cap">{photo.label}</div>
     </div>
@@ -263,11 +279,11 @@ function NoteBlock({ text, onEdit }) {
 }
 
 // ─── Sheet (bottom modal) ────────────────────────────────────────
-function Sheet({ title, onClose, children, actions }) {
+function Sheet({ title, onClose, children, actions, className = '' }) {
   return (
     <>
       <div className="sheet-backdrop" onClick={onClose}/>
-      <div className="sheet">
+      <div className={`sheet ${className}`.trim()}>
         <div className="grab"/>
         <div className="sheet-head">
           <h3>{title}</h3>

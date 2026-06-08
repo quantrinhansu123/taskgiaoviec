@@ -14,6 +14,10 @@ createRoot(document.getElementById('root')).render(
       <Route path="/desktop/sub-task/*" element={<Root />} />
       <Route path="/desktop/subtasks/*" element={<Root />} />
       <Route path="/desktop/nhan-su/*" element={<Root />} />
+      <Route path="/desktop/lich-doi" element={<Root />} />
+      <Route path="/desktop/bao-cao-gio" element={<Root />} />
+      <Route path="/desktop/cham-cong" element={<Root />} />
+      <Route path="/desktop/attendance" element={<Root />} />
       <Route path="/desktop/toi" element={<Root />} />
       <Route path="/may-tinh" element={<Navigate to="/desktop/san-pham" replace />} />
       <Route path="/may-tinh/*" element={<Root />} />
@@ -23,6 +27,12 @@ createRoot(document.getElementById('root')).render(
       <Route path="/subtasks/*" element={<Root />} />
       <Route path="/nhan-su/*" element={<Root />} />
       <Route path="/people/*" element={<Root />} />
+      <Route path="/lich-doi" element={<Root />} />
+      <Route path="/bao-cao-gio" element={<Root />} />
+      <Route path="/cham-cong" element={<Root />} />
+      <Route path="/schedule" element={<Root />} />
+      <Route path="/labor" element={<Root />} />
+      <Route path="/attendance" element={<Root />} />
       <Route path="/toi" element={<Root />} />
       <Route path="/me" element={<Root />} />
       <Route path="*" element={<Navigate to="/san-pham" replace />} />

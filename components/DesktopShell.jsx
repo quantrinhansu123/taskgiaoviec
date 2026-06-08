@@ -26,6 +26,26 @@ const NAV = [
     ),
   },
   {
+    id: 'schedule',
+    label: 'Lịch đội',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.8"/>
+        <path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'attendance',
+    label: 'Chấm công',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" strokeWidth="1.8"/>
+        <path d="M8 8h8M8 12h4M8 16h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
     id: 'people',
     label: 'Nhân sự',
     icon: (

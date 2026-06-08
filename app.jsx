@@ -16,6 +16,10 @@ import {
   createChildNode,
   createProduct,
   getLoggedInPersonId,
+  saveProjectSiteLocation,
+  saveProjectAttendance,
+  saveProjectTeamSchedules,
+  saveProjectStartedAt,
   canAddChildren,
   addChildLabels,
   resolveAddChildParent,
@@ -35,7 +39,7 @@ import { RouteLinks } from './lib/RouteLinks.jsx';
 import { DesktopShell } from './components/DesktopShell.jsx';
 import { swapLayoutPath } from './lib/routes.js';
 import { useEffectiveLayout } from './lib/useEffectiveLayout.js';
-import { combineDeadlineLocal, splitDeadlineForInput } from './lib/deadline.js';
+import { combineDeadlineLocal, splitDeadlineForInput, formatScheduleRange } from './lib/deadline.js';
 import { filesToPhotos, getImageFilesFromClipboard } from './lib/photos.js';
 import {
   newWorkActionId,
@@ -47,6 +51,25 @@ import {
   isWorkActionInProgress,
 } from './lib/workActions.js';
 import { formatCompletedAt } from './lib/nodeCompletion.js';
+import {
+  resolveAccessRole,
+  isAdmin,
+  canDeleteNode,
+  canDeleteWorkAction,
+  canEditWorkAction,
+  filterProductsForUser,
+  readStoredAccessRole,
+  writeStoredAccessRole,
+  ACCESS_ROLE,
+} from './lib/permissions.js';
+import { checkoutSession } from './lib/attendance.js';
+import { newTeamScheduleId } from './lib/siteLocation.js';
+import { teamsFromPeople } from './lib/teams.js';
+import { AttendancePanel } from './components/AttendancePanel.jsx';
+import { SiteLocationSheet, TeamScheduleSheet, ProjectStartedAtSheet } from './components/FieldOpsSheets.jsx';
+import { FieldOpsScreen } from './components/FieldOpsScreen.jsx';
+import { DateTimeFields } from './components/DateTimeFields.jsx';
+import { AttendanceEmbedView } from './components/AttendanceEmbedView.jsx';
 import {
   PEOPLE,
   setPeople,
@@ -294,6 +317,30 @@ function collectAllSubtaskItems(products) {
   return out;
 }
 
+function progressForSubtaskItems(items) {
+  const total = items.length;
+  const done = items.filter((it) => it.node.status === 'done' || it.node.completedAt).length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return { total, done, pct };
+}
+
+function taskProgressLabel(item, allItems) {
+  const siblings = allItems.filter((it) => (
+    it.productId === item.productId
+    && it.featureName === item.featureName
+    && it.parentTaskName === item.parentTaskName
+  ));
+  return progressForSubtaskItems(siblings);
+}
+
+function priorityForWorkItem(node) {
+  if (node.status === 'fail') return { label: 'Cao', tone: 'high' };
+  const tone = deadlineTone(node.deadline, node.status);
+  if (tone === 'overdue' || tone === 'urgent') return { label: 'Cao', tone: 'high' };
+  if (tone === 'soon') return { label: 'Trung bình', tone: 'medium' };
+  return { label: 'Thấp', tone: 'low' };
+}
+
 function isWithinDateRange(iso, from, to) {
   if (!from && !to) return true;
   if (!iso) return false;
@@ -412,12 +459,16 @@ function collectPhotosFromTree(node) {
 
 // ─── NodeDetail screen ────────────────────────────────────────────
 function NodeDetail({
-  node, depth, parent, t = {}, onOpenChild, onBack, onOpenPhoto, onEditNote, onEditDeadline,
+  node, depth, parent, t = {}, onOpenChild, onBack, onOpenPhoto, onViewPhoto, onEditNote, onEditDeadline,
   onOpenAssignees, onCycleStatus, onAddChild, onAddFeature, onOpenActions, onChildActions,
   onPastePhotos, onOpenWorkAction, onCompleteWorkAction, onDeletePhoto, onOpenDocLink, onCompleteNode,
+  onEditStartedAt,
   embedded = false, showBack = true, hideChildrenList = false,
   projectNode = null, subtaskSupported = true, docLinksSupported = true, projectDocLinksSupported = true,
   subtaskPanel = null,
+  currentUserId = null, accessRole = 'worker', people = [],
+  onAttendanceCheckIn, onAttendanceCheckOut, onOpenSiteSettings, onOpenTeamSchedule,
+  projectFieldSettingsSupported = true,
 }) {
   const stats = aggregate(node);
   const listParent = resolveListParent(node, parent);
@@ -426,9 +477,6 @@ function NodeDetail({
   const { child: addChildLabel, section: childrenLabel } = addChildLabels(listParent || node);
   const myLabel = LEVEL_LABEL[depth] || 'Mục';
   const canAddChild = listParent && typeof onAddChild === 'function';
-  const canAddFeature = projectNode
-    && listParent?.id !== projectNode.id
-    && typeof onAddFeature === 'function';
   const showSiblingList = listParent && listParent.id !== node.id;
   const canPastePhoto = node?._source?.table === 'tasks' && typeof onPastePhotos === 'function';
   const canAddPhoto = node?._source?.table === 'tasks';
@@ -532,6 +580,14 @@ function NodeDetail({
               <StatusChip status={node.status}/>
             </button>
             <DeadlineChip iso={node.deadline} status={node.status} onClick={onEditDeadline}/>
+            {isProject && typeof onEditStartedAt === 'function' && (
+              <DeadlineChip
+                iso={node.startedAt}
+                status={node.status}
+                onClick={onEditStartedAt}
+                emptyLabel="Ngày giờ bắt đầu"
+              />
+            )}
             {node.issues > 0 && (
               <span className="chip count has-issue">
                 <Icon.warn/> {node.issues} lỗi
@@ -620,6 +676,48 @@ function NodeDetail({
         )}
 
         {subtaskPanel}
+
+        {isProject && projectFieldSettingsSupported && (
+          <>
+            <AttendancePanel
+              project={node}
+              currentUserId={currentUserId}
+              people={people}
+              accessRole={accessRole}
+              onCheckIn={onAttendanceCheckIn}
+              onCheckOut={onAttendanceCheckOut}
+              onOpenSiteSettings={isAdmin(accessRole) ? onOpenSiteSettings : undefined}
+            />
+            {isAdmin(accessRole) && (
+              <div className="field-ops-section">
+                <div className="section-head">
+                  <h3>Lịch đội trên công trình</h3>
+                  <button type="button" className="section-action" onClick={() => onOpenTeamSchedule?.(null)}>
+                    + Gán đội
+                  </button>
+                </div>
+                {(node.teamSchedules || []).length === 0 ? (
+                  <p className="field-note">Chưa gán đội. Gán đội để hiển thị trên Timeline.</p>
+                ) : (
+                  <div className="team-schedule-list">
+                    {(node.teamSchedules || []).map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="team-schedule-row"
+                        onClick={() => onOpenTeamSchedule?.(s)}
+                      >
+                        <strong>{s.team}</strong>
+                        <span>{formatScheduleRange(s.startAt, s.endAt) || `${s.startDate} → ${s.endDate}`}</span>
+                        {s.note && <span className="team-schedule-note">{s.note}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
 
         {canShowDocLinks && (
           <>
@@ -778,7 +876,12 @@ function NodeDetail({
           aria-label={canPastePhoto ? 'Ảnh đính kèm — Ctrl+V để dán' : undefined}
         >
           {displayPhotos.map(ph => (
-            <PhotoThumb key={ph.id} photo={ph} onClick={() => onOpenPhoto(ph)}/>
+            <PhotoThumb
+              key={ph.id}
+              photo={ph}
+              onClick={() => onOpenPhoto(ph)}
+              onView={() => (onViewPhoto || onOpenPhoto)(ph)}
+            />
           ))}
           {canPastePhoto && (
             <div className="photo add photo-paste-target" onClick={() => onOpenPhoto(null)}>
@@ -821,6 +924,14 @@ function NodeDetail({
                   <span className="doc-row-text">
                     <strong>{ph.sourceName}</strong> · {ph.label}
                   </span>
+                </button>
+                <button
+                  type="button"
+                  className="doc-row-view"
+                  aria-label="Xem ảnh full"
+                  onClick={() => (onViewPhoto || onOpenPhoto)(ph)}
+                >
+                  <Icon.eye />
                 </button>
                 {typeof onDeletePhoto === 'function' && (
                   <button
@@ -898,23 +1009,6 @@ function NodeDetail({
                 >
                   <Icon.plus/> Thêm {addChildLabel} đầu tiên
                 </button>
-                {canAddFeature && (
-                  <button
-                    type="button"
-                    onClick={onAddFeature}
-                    className="btn btn-secondary btn-block"
-                    style={{ borderStyle: 'dashed' }}
-                  >
-                    <Icon.plus/> Thêm hạng mục khác
-                  </button>
-                )}
-              </div>
-            )}
-            {hasChildren && canAddFeature && (
-              <div style={{ padding: '4px 16px 12px' }}>
-                <button type="button" onClick={onAddFeature} className="btn btn-secondary btn-block">
-                  <Icon.plus/> Thêm hạng mục (sản phẩm)
-                </button>
               </div>
             )}
           </div>
@@ -967,9 +1061,23 @@ function PeopleHome({ products, onOpenPerson }) {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
+  const [statusTab, setStatusTab] = useState('all');
+
   const enriched = useMemo(() => {
     return PEOPLE.map(p => ({ p, stats: personStats(p.id, products) }));
   }, [products]);
+
+  const statusTabs = useMemo(() => [
+    { key: 'all', label: 'Tất cả' },
+    ...Object.entries(STATUS_META).map(([key, meta]) => ({ key, label: meta.label })),
+  ], []);
+
+  const tableRows = useMemo(() => {
+    return enriched.filter(({ stats }) => {
+      if (statusTab === 'all') return true;
+      return stats[statusTab] > 0;
+    });
+  }, [enriched, statusTab]);
 
   const depts = useMemo(() => {
     const set = new Set(PEOPLE.map(p => p.dept));
@@ -1023,6 +1131,52 @@ function PeopleHome({ products, onOpenPerson }) {
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+        </div>
+
+        <div className="people-status-table">
+          <div className="people-status-tabs">
+            {statusTabs.map((tabItem) => (
+              <button
+                key={tabItem.key}
+                type="button"
+                className={`people-status-tab ${statusTab === tabItem.key ? 'active' : ''}`}
+                onClick={() => setStatusTab(tabItem.key)}
+              >
+                {tabItem.label}
+              </button>
+            ))}
+          </div>
+          <div className="people-status-table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nhân sự</th>
+                  <th>Tổng</th>
+                  <th>Chờ</th>
+                  <th>Đang làm</th>
+                  <th>Đạt</th>
+                  <th>Có lỗi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableRows.map(({ p, stats }) => (
+                  <tr key={p.id} onClick={() => onOpenPerson(p.id)}>
+                    <td className="person-name">{p.name}</td>
+                    <td>{stats.total}</td>
+                    <td>{stats.todo || 0}</td>
+                    <td>{stats.doing || 0}</td>
+                    <td>{stats.done || 0}</td>
+                    <td>{stats.fail || 0}</td>
+                  </tr>
+                ))}
+                {tableRows.length === 0 && (
+                  <tr>
+                    <td colSpan="6" className="empty-row">Không có nhân sự phù hợp.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div className="filter-row" style={{ padding: '12px 16px 8px' }}>
@@ -1088,6 +1242,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef(null);
   const [groupBy, setGroupBy] = useState('product'); // product | status
+  const [statusFilter, setStatusFilter] = useState('all');
   const [selectedSubtaskIds, setSelectedSubtaskIds] = useState(() => new Set());
 
   useEffect(() => {
@@ -1125,6 +1280,18 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
 
   const allSubtasksSelected = isMe && items.length > 0 && selectedSubtaskIds.size === items.length;
 
+  const statusFilterOptions = useMemo(() => {
+    const order = ['todo', 'doing', 'fail', 'done'];
+    return [
+      { key: 'all', label: 'Tất cả', count: items.length },
+      ...order.map((key) => ({
+        key,
+        label: STATUS_META[key].label,
+        count: items.filter((it) => it.node.status === key).length,
+      })),
+    ];
+  }, [items]);
+
   const toggleSubtaskSelection = useCallback((nodeId) => {
     setSelectedSubtaskIds((prev) => {
       const next = new Set(prev);
@@ -1143,7 +1310,17 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
   }, []);
 
   const grouped = useMemo(() => {
-    if (isMe || groupBy === 'product') {
+    if (isMe) {
+      const order = ['todo', 'doing', 'fail', 'done'];
+      return order
+        .filter((statusKey) => statusFilter === 'all' || statusFilter === statusKey)
+        .map((statusKey) => ({
+          title: STATUS_META[statusKey].label,
+          status: statusKey,
+          items: items.filter((it) => it.node.status === statusKey),
+        }));
+    }
+    if (groupBy === 'product') {
       const map = new Map();
       items.forEach(it => {
         if (!map.has(it.productId)) {
@@ -1165,7 +1342,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
       items: items.filter(it => it.node.status === s),
     })).filter(g => g.items.length > 0);
     return groups;
-  }, [items, groupBy, isMe]);
+  }, [items, groupBy, isMe, statusFilter]);
 
   if (!person) return null;
 
@@ -1231,22 +1408,37 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
             {isMe ? 'Sub-task được phân công' : 'Việc đang phụ trách'} · {items.length}
           </div>
           {isMe && items.length > 0 && (
-            <div className="subtask-report-toolbar">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={allSubtasksSelected ? clearSelectedSubtasks : selectAllSubtasks}
-              >
-                {allSubtasksSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={selectedSubtaskItems.length === 0}
-                onClick={() => printSubtaskReport({ person, items: selectedSubtaskItems })}
-              >
-                In ({selectedSubtaskItems.length})
-              </button>
+            <div className="my-work-controls">
+              <div className="my-status-filter" aria-label="Lọc theo trạng thái">
+                {statusFilterOptions.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className={`my-status-filter-btn ${statusFilter === option.key ? 'active' : ''}`}
+                    onClick={() => setStatusFilter(option.key)}
+                  >
+                    {option.label}
+                    <span>{option.count}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="subtask-report-toolbar">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={allSubtasksSelected ? clearSelectedSubtasks : selectAllSubtasks}
+                >
+                  {allSubtasksSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={selectedSubtaskItems.length === 0}
+                  onClick={() => printSubtaskReport({ person, items: selectedSubtaskItems })}
+                >
+                  In ({selectedSubtaskItems.length})
+                </button>
+              </div>
             </div>
           )}
           {!isMe && (
@@ -1277,14 +1469,13 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
           )}
         </div>
 
-        <div className={isMe ? 'my-kanban-board' : ''} style={{ padding: '0 16px 110px' }}>
-          {grouped.length === 0 && (
+        <div className={isMe ? 'my-kanban-board-wrap' : ''} style={{ padding: '0 16px 110px' }}>
+          {(!isMe && grouped.length === 0) && (
             <div className="empty">
-              {isMe
-                ? 'Chưa có sub-task nào được gán cho bạn.'
-                : 'Không có việc nào đang phụ trách.'}
+              Không có việc nào đang phụ trách.
             </div>
           )}
+          <div className={isMe ? 'my-kanban-board' : ''}>
           {grouped.map((g, gi) => (
             <div key={gi} className={isMe ? 'my-kanban-column' : ''} style={{ marginBottom: 14 }}>
               <div style={{
@@ -1311,6 +1502,9 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                 </span>
               </div>
               <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {isMe && g.items.length === 0 && (
+                  <div className="my-kanban-empty">Không có sub-task.</div>
+                )}
                 {g.items.map((it, i) => {
                   const { node, productName, customerName, parentName, featureName, parentTaskName } = it;
                   const pathCrumb = [
@@ -1389,6 +1583,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
               </div>
             </div>
           ))}
+          </div>
         </div>
       </div>
     </div>
@@ -1408,20 +1603,31 @@ function SubtasksDashboard({ products, onOpenNode }) {
     products.map((p) => ({ id: p.id, name: p.name, customerName: p.customerName }))
   ), [products]);
 
-  const filtered = useMemo(() => (
-    allItems.filter((it) => {
+  const filtered = useMemo(() => {
+    const list = allItems.filter((it) => {
       if (projectId !== 'all' && it.productId !== projectId) return false;
       if (assigneeId !== 'all' && !(it.node.assignees || []).includes(assigneeId)) return false;
       if (status !== 'all' && it.node.status !== status) return false;
       if (!isWithinDateRange(it.node.completedAt, dateFrom, dateTo)) return false;
       return true;
-    })
-  ), [allItems, projectId, assigneeId, status, dateFrom, dateTo]);
+    });
+    return list.sort((a, b) => {
+      const aPath = [a.customerName || '', a.productName || '', a.featureName || '', a.parentTaskName || '', a.node.name || ''].join('\u0000');
+      const bPath = [b.customerName || '', b.productName || '', b.featureName || '', b.parentTaskName || '', b.node.name || ''].join('\u0000');
+      return aPath.localeCompare(bPath, 'vi', { sensitivity: 'base' });
+    });
+  }, [allItems, projectId, assigneeId, status, dateFrom, dateTo]);
 
   const totals = useMemo(() => {
     const projectSet = new Set(filtered.map((it) => it.productId));
     const minutes = filtered.reduce((sum, it) => sum + totalWorkMinutesFor(it.node), 0);
-    return { projects: projectSet.size, minutes, subtasks: filtered.length };
+    const progress = progressForSubtaskItems(filtered);
+    const byStatus = filtered.reduce((acc, it) => {
+      acc[it.node.status] = (acc[it.node.status] || 0) + 1;
+      return acc;
+    }, { todo: 0, doing: 0, fail: 0, done: 0 });
+    const taskSet = new Set(filtered.map((it) => `${it.productId}|${it.featureName}|${it.parentTaskName}`));
+    return { projects: projectSet.size, minutes, subtasks: filtered.length, tasks: taskSet.size, progress, byStatus };
   }, [filtered]);
 
   const resetFilters = () => {
@@ -1436,17 +1642,20 @@ function SubtasksDashboard({ products, onOpenNode }) {
     <div className="screen subtasks-screen">
       <div className="subtasks-topbar">
         <div>
-          <div className="crumb">Sub-task</div>
-          <h1>Toàn bộ sub-task</h1>
+          <div className="crumb">Team work</div>
+          <h1>Bảng tổng hợp công việc toàn team</h1>
         </div>
         <button type="button" className="btn btn-secondary" onClick={resetFilters}>Xóa lọc</button>
       </div>
 
       <div className="scroll subtasks-scroll">
         <div className="subtasks-summary">
-          <div className="subtasks-summary-card"><div className="num">{totals.projects}</div><div className="lbl">Tổng dự án</div></div>
-          <div className="subtasks-summary-card"><div className="num">{formatDurationMinutes(totals.minutes) || '0 phút'}</div><div className="lbl">Tổng thời gian làm</div></div>
-          <div className="subtasks-summary-card"><div className="num">{totals.subtasks}</div><div className="lbl">Sub-task</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.projects}</div><div className="lbl">Dự án</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.tasks}</div><div className="lbl">Task chính</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.subtasks}</div><div className="lbl">Sub task</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.progress.pct}%</div><div className="lbl">Tiến độ chung</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.byStatus.doing}</div><div className="lbl">Đang làm</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.byStatus.fail}</div><div className="lbl">Đang vướng</div></div>
         </div>
 
         <div className="subtasks-filters">
@@ -1490,11 +1699,14 @@ function SubtasksDashboard({ products, onOpenNode }) {
             <table className="subtasks-table">
               <thead>
                 <tr>
-                  <th>Sub-task</th>
                   <th>Dự án</th>
-                  <th>Task</th>
-                  <th>Nhân sự</th>
-                  <th>Hoàn thành</th>
+                  <th>Hạng mục</th>
+                  <th>Công việc</th>
+                  <th>Sub task</th>
+                  <th>Người phụ trách</th>
+                  <th>Ưu tiên</th>
+                  <th>Deadline</th>
+                  <th>Tiến độ công việc</th>
                   <th>Thời gian làm</th>
                   <th>Trạng thái</th>
                 </tr>
@@ -1503,13 +1715,24 @@ function SubtasksDashboard({ products, onOpenNode }) {
                 {filtered.map((it) => {
                   const assignees = (it.node.assignees || []).map((id) => PEOPLE.find((p) => p.id === id)?.name || id).join(', ');
                   const mins = totalWorkMinutesFor(it.node);
+                  const taskProgress = taskProgressLabel(it, allItems);
+                  const priority = priorityForWorkItem(it.node);
                   return (
                     <tr key={it.node.id} onClick={() => onOpenNode(it.node.id)}>
-                      <td><div className="subtasks-table-title">{it.node.name}</div><div className="subtasks-table-sub">{it.featureName}</div></td>
                       <td><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
-                      <td>{it.parentTaskName}</td>
+                      <td><div className="subtasks-table-title">{it.featureName || 'Chưa có hạng mục'}</div></td>
+                      <td><div className="subtasks-table-title">{it.parentTaskName || 'Chưa có công việc'}</div></td>
+                      <td><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">Hoàn thành: {formatCompletedAt(it.node.completedAt)}</div>}</td>
                       <td>{assignees || 'Chưa gán'}</td>
-                      <td>{it.node.completedAt ? formatCompletedAt(it.node.completedAt) : 'Chưa hoàn thành'}</td>
+                      <td><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
+                      <td><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
+                      <td>
+                        <div className="task-progress-cell">
+                          <div className="task-progress-text">{taskProgress.pct}%</div>
+                          <div className="task-progress-track"><span style={{ width: `${taskProgress.pct}%` }} /></div>
+                          <div className="subtasks-table-sub">{taskProgress.done}/{taskProgress.total} sub task xong</div>
+                        </div>
+                      </td>
                       <td>{formatDurationMinutes(mins) || '0 phút'}</td>
                       <td><StatusChip status={it.node.status}/></td>
                     </tr>
@@ -1531,6 +1754,9 @@ function BottomNav({ tab, onChange, alertCount }) {
     ) },
     { id: 'subtasks', label: 'Sub-task', icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M7 6h14M7 12h14M7 18h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    ) },
+    { id: 'schedule', label: 'Lịch', icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ) },
     { id: 'people', label: 'Nhân sự', icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><circle cx="17" cy="9.5" r="2.5" stroke="currentColor" strokeWidth="1.8"/><path d="M3 19a6 6 0 0112 0M14 18a5 5 0 017 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
@@ -1567,13 +1793,27 @@ function FilterPill({ children, active, onClick, tone }) {
 }
 
 // ─── Product Card (richer top-level card) ─────────────────────────
-function ProductCard({ product, onOpen, onOpenActions, onComplete }) {
+function ProductCard({ product, onOpen, onOpenActions, onComplete, selectable = false, selected = false, onToggleSelected }) {
   const stats = aggregate(product);
   const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
   const tone = deadlineTone(product.deadline, product.status);
   const modules = (product.children || []).length;
   return (
-    <div className={`product-card ${product.status === 'fail' ? 'fail' : ''} ${product.status === 'done' ? 'done' : ''}`} onClick={onOpen}>
+    <div className={`product-card ${product.status === 'fail' ? 'fail' : ''} ${product.status === 'done' ? 'done' : ''} ${selected ? 'selected' : ''}`} onClick={onOpen}>
+      {selectable && (
+        <button
+          type="button"
+          className={`product-select-box ${selected ? 'checked' : ''}`}
+          aria-pressed={selected}
+          aria-label={`${selected ? 'Bỏ chọn' : 'Chọn'} ${product.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelected?.(product.id);
+          }}
+        >
+          {selected && <Icon.check/>}
+        </button>
+      )}
       {onOpenActions && (
         <button
           type="button"
@@ -1654,11 +1894,19 @@ function productMatchesSearch(product, query) {
   return parts.some((s) => String(s).toLowerCase().includes(q));
 }
 
-function ProductsHome({ products, onOpen, onOpenActions, onComplete, onAddProduct, panel = false, currentUserId = null }) {
+function ProductsHome({
+  products, onOpen, onOpenActions, onComplete, onAddProduct, onDeleteSelected,
+  panel = false, currentUserId = null, canBulkDelete = false,
+}) {
   const [tab, setTab] = useState('active'); // active | done | all
   const [search, setSearch] = useState('');
+  const [selectedProductIds, setSelectedProductIds] = useState(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { layout } = parseAppPath(location.pathname);
   const currentUser = useMemo(
     () => PEOPLE.find((p) => p.id === currentUserId) || PEOPLE[0] || null,
     [currentUserId],
@@ -1704,6 +1952,60 @@ function ProductsHome({ products, onOpen, onOpenActions, onComplete, onAddProduc
     return list;
   }, [products, tab, search]);
 
+  useEffect(() => {
+    const visibleIds = new Set(filtered.map((p) => p.id));
+    setSelectedProductIds((prev) => {
+      const next = new Set([...prev].filter((id) => visibleIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filtered]);
+
+  const selectedVisibleCount = useMemo(() => (
+    filtered.reduce((count, p) => count + (selectedProductIds.has(p.id) ? 1 : 0), 0)
+  ), [filtered, selectedProductIds]);
+  const allVisibleSelected = filtered.length > 0 && selectedVisibleCount === filtered.length;
+
+  const toggleProductSelection = useCallback((productId) => {
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }, []);
+
+  const toggleAllVisibleProducts = useCallback(() => {
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        filtered.forEach((p) => next.delete(p.id));
+      } else {
+        filtered.forEach((p) => next.add(p.id));
+      }
+      return next;
+    });
+  }, [allVisibleSelected, filtered]);
+
+  const clearProductSelection = useCallback(() => {
+    setSelectedProductIds(new Set());
+  }, []);
+
+  const deleteSelectedProducts = useCallback(async () => {
+    if (!onDeleteSelected || selectedProductIds.size === 0) return;
+    const selectedNames = products
+      .filter((p) => selectedProductIds.has(p.id))
+      .map((p) => p.name);
+    const ok = window.confirm(`Xóa ${selectedNames.length} sản phẩm đã chọn? Toàn bộ hạng mục, công việc và sub-task bên trong cũng sẽ bị xóa.`);
+    if (!ok) return;
+    setBulkDeleting(true);
+    try {
+      await onDeleteSelected([...selectedProductIds]);
+      clearProductSelection();
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [clearProductSelection, onDeleteSelected, products, selectedProductIds]);
+
   return (
     <div className={`screen ${panel ? 'screen--panel' : 'has-nav'}`}>
       <div className={`topbar ${scrolled ? 'scrolled' : ''} ${panel ? 'topbar--panel' : ''}`}>
@@ -1747,6 +2049,24 @@ function ProductsHome({ products, onOpen, onOpenActions, onComplete, onAddProduc
             <div className={`s ${counts.totalIssues > 0 ? 'alert' : ''}`}><div className="n">{counts.totalIssues}</div><div className="l">Lỗi mở</div></div>
             <div className="s"><div className="n">{counts.totalDone}<span style={{fontSize:13, color:'var(--muted)', fontWeight:500}}>/{counts.totalTotal}</span></div><div className="l">Việc đạt</div></div>
           </div>
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap', justifyContent:'center', marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => navigate(pathForTab('people', layout))}
+              style={{
+                minWidth: 120,
+                padding: '10px 14px',
+                borderRadius: 12,
+                border: '1px solid var(--line)',
+                background: '#fff',
+                color: 'var(--ink)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Xem Nhân sự
+            </button>
+          </div>
         </div>
         )}
 
@@ -1777,6 +2097,36 @@ function ProductsHome({ products, onOpen, onOpenActions, onComplete, onAddProduc
           </button>
         </div>
 
+        {canBulkDelete && (
+          <div className="product-bulk-toolbar">
+            <button
+              type="button"
+              className={`product-bulk-check ${allVisibleSelected ? 'checked' : ''}`}
+              aria-pressed={allVisibleSelected}
+              disabled={filtered.length === 0}
+              onClick={toggleAllVisibleProducts}
+            >
+              <span className="product-bulk-check-box">{allVisibleSelected && <Icon.check/>}</span>
+              {allVisibleSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả đang hiển thị'}
+            </button>
+            <span className="product-bulk-count">{selectedVisibleCount} đã chọn</span>
+            {selectedVisibleCount > 0 && (
+              <button type="button" className="product-bulk-clear" onClick={clearProductSelection}>
+                Bỏ chọn
+              </button>
+            )}
+            <button
+              type="button"
+              className="product-bulk-delete"
+              disabled={selectedVisibleCount === 0 || bulkDeleting}
+              onClick={deleteSelectedProducts}
+            >
+              <Icon.trash/>
+              {bulkDeleting ? 'Đang xóa…' : 'Xóa đã chọn'}
+            </button>
+          </div>
+        )}
+
         <div className={`product-list ${panel ? 'product-list--panel' : ''}`}>
           {filtered.length === 0 && (
             <div className="empty">
@@ -1792,6 +2142,9 @@ function ProductsHome({ products, onOpen, onOpenActions, onComplete, onAddProduc
               onOpen={() => onOpen(p)}
               onOpenActions={onOpenActions}
               onComplete={onComplete}
+              selectable={canBulkDelete}
+              selected={selectedProductIds.has(p.id)}
+              onToggleSelected={toggleProductSelection}
             />
           ))}
         </div>
@@ -1822,9 +2175,6 @@ function DesktopProductsSplit({
   const activeId = currentNode?.id;
   const showAsideAdd = listParent && canAddChildren(listParent);
   const asideAddLabel = addChildLabels(listParent).child;
-  const showAsideAddFeature = projectNode
-    && listParent?.id !== projectNode.id
-    && typeof onAddFeature === 'function';
   const hideChildrenInMain = listItems.length > 0;
   const isFeatureTaskList = listParent?._source?.table === 'features'
     && listItems.some((item) => item?._source?.table === 'tasks' && !item?._source?.parentTaskId);
@@ -2047,18 +2397,11 @@ function DesktopProductsSplit({
                 })}
               </div>
             </div>
-            {(showAsideAdd || showAsideAddFeature) && (
+            {showAsideAdd && onAddChild && (
               <div className="desktop-split-aside-foot desktop-split-aside-foot--stack">
-                {showAsideAdd && onAddChild && (
-                  <button type="button" className="btn btn-primary btn-block" onClick={onAddChild}>
-                    <Icon.plus/> Thêm {asideAddLabel}
-                  </button>
-                )}
-                {showAsideAddFeature && (
-                  <button type="button" className="btn btn-secondary btn-block" onClick={onAddFeature}>
-                    <Icon.plus/> Thêm hạng mục
-                  </button>
-                )}
+                <button type="button" className="btn btn-primary btn-block" onClick={onAddChild}>
+                  <Icon.plus/> Thêm {asideAddLabel}
+                </button>
               </div>
             )}
           </div>
@@ -2142,7 +2485,7 @@ function ActionDateTimeFields({
   );
 }
 
-function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete }) {
+function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete, canDelete = true }) {
   const nowFields = () => splitDeadlineForInput(new Date().toISOString());
   const startInit = action
     ? splitActionDateTime(action.startedAt)
@@ -2304,7 +2647,7 @@ function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete }) {
           <button type="button" className="btn btn-secondary" disabled={saving} onClick={handleSave}>
             {saving ? 'Đang lưu…' : 'Lưu'}
           </button>
-          {action && onDelete && (
+          {action && onDelete && canDelete && (
             <button
               type="button"
               className="btn btn-ghost-danger"
@@ -2332,7 +2675,7 @@ function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete }) {
 
 // ─── Sheets content ────────────────────────────────────────────────
 function PhotoSheet({
-  photo, onClose, onUpdatePhoto, onDeletePhoto, onAddFiles, canEdit = true,
+  photo, onClose, onUpdatePhoto, onDeletePhoto, onAddFiles, canEdit = true, viewOnly = false,
 }) {
   const [cap, setCap] = useState(photo ? photo.label : '');
   const [isBad, setIsBad] = useState(photo?.kind === 'bad');
@@ -2371,17 +2714,37 @@ function PhotoSheet({
     ? { backgroundImage: `url(${photo.url})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundColor: photo.tint }
     : { background: photoBg(photo?.tint || '#E8D5C4') };
 
+  const canEditPhotoMeta = photo && canEdit;
+  const showBadToggle = canEditPhotoMeta && !viewOnly;
+
   return (
-    <Sheet title={photo ? 'Chi tiết ảnh' : 'Thêm ảnh'} onClose={onClose}>
+    <Sheet
+      title={photo ? (viewOnly ? 'Xem ảnh' : 'Chi tiết ảnh') : 'Thêm ảnh'}
+      onClose={onClose}
+      className={viewOnly ? 'sheet--photo-viewer' : ''}
+    >
       <div className="form-stack">
         {photo ? (
           <>
-            <div className="photo-modal-img" style={previewStyle}>
-              {photo.kind === 'bad' && (
-                <span className="photo-modal-badge">Ảnh lỗi</span>
-              )}
-            </div>
-            {canEdit && (
+            {photo.url && viewOnly ? (
+              <div className="photo-modal-viewer">
+                <img
+                  src={photo.url}
+                  alt={photo.label || 'Ảnh đính kèm'}
+                  className="photo-modal-img-full"
+                />
+                {photo.kind === 'bad' && (
+                  <span className="photo-modal-badge">Ảnh lỗi</span>
+                )}
+              </div>
+            ) : (
+              <div className="photo-modal-img" style={previewStyle}>
+                {photo.kind === 'bad' && (
+                  <span className="photo-modal-badge">Ảnh lỗi</span>
+                )}
+              </div>
+            )}
+            {canEditPhotoMeta && (
               <>
                 <div className="field">
                   <label className="field-label" htmlFor="photo-cap">Ghi chú cho ảnh</label>
@@ -2393,6 +2756,13 @@ function PhotoSheet({
                     placeholder="Mô tả: lỗi gì, ở đâu, cần làm gì…"
                   />
                 </div>
+                {!showBadToggle && (
+                  <p className="field-note photo-modal-caption">Ghi chú này sẽ hiển thị dưới ảnh trong danh sách.</p>
+                )}
+              </>
+            )}
+            {showBadToggle && (
+              <>
                 <label className="photo-bad-check">
                   <input
                     type="checkbox"
@@ -2403,7 +2773,7 @@ function PhotoSheet({
                 </label>
               </>
             )}
-            {canEdit && (
+            {canEditPhotoMeta && (
               <div className="btn-row">
                 <button
                   type="button"
@@ -2413,16 +2783,18 @@ function PhotoSheet({
                     onClose();
                   }}
                 >
-                  Lưu
+                  {viewOnly ? 'Lưu ghi chú' : 'Lưu'}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost-danger"
-                  onClick={() => { onDeletePhoto(); onClose(); }}
-                  aria-label="Xóa ảnh"
-                >
-                  <Icon.trash/>
-                </button>
+                {!viewOnly && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost-danger"
+                    onClick={() => { onDeletePhoto(); onClose(); }}
+                    aria-label="Xóa ảnh"
+                  >
+                    <Icon.trash/>
+                  </button>
+                )}
               </div>
             )}
           </>
@@ -2475,6 +2847,10 @@ function SheetHint({ label, name }) {
       {label}: <strong>{name}</strong>
     </p>
   );
+}
+
+function currentDateTimeForInput() {
+  return splitDeadlineForInput(new Date().toISOString());
 }
 
 function DeadlineDateTimeFields({
@@ -2782,7 +3158,10 @@ function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
 function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
   const isFeature = parentNode?._source?.table === 'projects';
   const isTaskLike = parentNode?._source?.table === 'features' || parentNode?._source?.table === 'tasks';
+  const startInitial = useMemo(() => currentDateTimeForInput(), []);
   const [name, setName] = useState('');
+  const [startedDate, setStartedDate] = useState(startInitial.date);
+  const [startedTime, setStartedTime] = useState(startInitial.time);
   const [deadlineDate, setDeadlineDate] = useState('');
   const [deadlineTime, setDeadlineTime] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
@@ -2794,9 +3173,11 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
     setErr('');
     setSaving(true);
     try {
+      const startedAt = startedDate ? combineDeadlineLocal(startedDate, startedTime) : null;
       const deadlineIso = deadlineDate ? combineDeadlineLocal(deadlineDate, deadlineTime) : null;
       await onSave({
         name,
+        startedAt,
         deadline: deadlineIso,
         assignees: (isTaskLike || isFeature)
           ? assigneeIds
@@ -2827,6 +3208,16 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
           />
         </div>
+        <DateTimeFields
+          label="Ngày giờ bắt đầu"
+          dateId="add-child-started-date"
+          timeId="add-child-started-time"
+          date={startedDate}
+          time={startedTime}
+          onDateChange={setStartedDate}
+          onTimeChange={setStartedTime}
+          note="Điền sẵn thời điểm hiện tại, có thể chỉnh lại trước khi tạo."
+        />
         <DeadlineDateTimeFields
           dateId="add-child-deadline-date"
           timeId="add-child-deadline-time"
@@ -2867,11 +3258,14 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
   );
 }
 
-function EditPersonSheet({ person, onClose, onSave }) {
+function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
   const [name, setName] = useState(person.name || '');
   const [role, setRole] = useState(person.role || '');
   const [dept, setDept] = useState(person.dept || '');
   const [status, setStatus] = useState(person.status === 'online' ? 'online' : 'off');
+  const [accessRole, setAccessRole] = useState(
+    person.accessRole || readStoredAccessRole(person.id) || ACCESS_ROLE.WORKER,
+  );
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -2879,7 +3273,7 @@ function EditPersonSheet({ person, onClose, onSave }) {
     setErr('');
     setSaving(true);
     try {
-      await onSave({ name, role, dept, status });
+      await onSave({ name, role, dept, status, accessRole: showAccessRole ? accessRole : undefined });
       onClose();
     } catch (e) {
       setErr(e.message || 'Không lưu được nhân sự');
@@ -2934,6 +3328,21 @@ function EditPersonSheet({ person, onClose, onSave }) {
             <option value="off">Offline</option>
           </select>
         </div>
+        {showAccessRole && (
+          <div className="field">
+            <label className="field-label" htmlFor="edit-person-access">Quyền truy cập</label>
+            <select
+              id="edit-person-access"
+              className="field-input"
+              value={accessRole}
+              onChange={(e) => setAccessRole(e.target.value)}
+            >
+              <option value={ACCESS_ROLE.ADMIN}>Admin — toàn quyền</option>
+              <option value={ACCESS_ROLE.WORKER}>Thợ hiện trường</option>
+            </select>
+            <p className="field-note">Admin: xóa/sửa mọi Job, xem báo cáo. Thợ: chỉ Job được giao.</p>
+          </div>
+        )}
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
@@ -3050,7 +3459,7 @@ function deleteImpactText(node) {
   return `Sản phẩm «${node.name}», ${features} hạng mục và ${tasks} công việc sẽ bị xóa vĩnh viễn.`;
 }
 
-function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelete }) {
+function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelete, canDelete = true }) {
   const label = nodeLevelLabel(node);
   const table = node?._source?.table;
   return (
@@ -3072,10 +3481,12 @@ function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelet
           <Icon.edit />
           <span>Sửa {label}</span>
         </button>
-        <button type="button" className="node-action-btn danger" onClick={onDelete}>
-          <Icon.trash />
-          <span>Xóa {label}</span>
-        </button>
+        {canDelete && (
+          <button type="button" className="node-action-btn danger" onClick={onDelete}>
+            <Icon.trash />
+            <span>Xóa {label}</span>
+          </button>
+        )}
       </div>
       </div>
     </Sheet>
@@ -3130,16 +3541,19 @@ function EditNodeSheet({ node, onClose, onSave }) {
         {showStatus && (
           <div className="field">
             <label className="field-label" htmlFor="edit-status">Tráº¡ng thÃ¡i</label>
-            <select
-              id="edit-status"
-              className="field-input"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            >
+            <div className="status-choice-group" role="group" aria-label="Đổi trạng thái">
               {Object.entries(STATUS_META).map(([value, meta]) => (
-                <option key={value} value={value}>{meta.label}</option>
+                <button
+                  key={value}
+                  type="button"
+                  className={`status-choice-btn status-choice-btn--${value} ${status === value ? 'active' : ''}`}
+                  onClick={() => setStatus(value)}
+                >
+                  <span className="status-choice-dot" style={{ background: meta.dot }} />
+                  {meta.label}
+                </button>
               ))}
-            </select>
+            </div>
           </div>
         )}
         <DeadlineDateTimeFields
@@ -3270,6 +3684,19 @@ function App({ t }) {
   const [subtaskSupported, setSubtaskSupported] = useState(true);
   const [docLinksSupported, setDocLinksSupported] = useState(true);
   const [projectDocLinksSupported, setProjectDocLinksSupported] = useState(true);
+  const [projectFieldSettingsSupported, setProjectFieldSettingsSupported] = useState(true);
+  const [accessRoleSupported, setAccessRoleSupported] = useState(false);
+
+  const accessRole = useMemo(() => {
+    const person = PEOPLE.find((p) => p.id === currentUserId);
+    const stored = currentUserId ? readStoredAccessRole(currentUserId) : null;
+    return resolveAccessRole(person, stored);
+  }, [currentUserId, products]);
+
+  const visibleProducts = useMemo(
+    () => filterProductsForUser(products, currentUserId, accessRole),
+    [products, currentUserId, accessRole],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -3284,6 +3711,8 @@ function App({ t }) {
           subtaskSupported: subOk,
           docLinksSupported: docOk,
           projectDocLinksSupported: projDocOk,
+          projectFieldSettingsSupported: fieldOk,
+          accessRoleSupported: roleOk,
         } = await fetchAppData();
         if (cancelled) return;
         setPeople(people);
@@ -3292,6 +3721,8 @@ function App({ t }) {
         setSubtaskSupported(subOk !== false);
         setDocLinksSupported(docOk !== false);
         setProjectDocLinksSupported(projDocOk !== false);
+        setProjectFieldSettingsSupported(fieldOk !== false);
+        setAccessRoleSupported(roleOk === true);
         const loggedInPersonId = await getLoggedInPersonId(people);
         const nextCurrentUserId = resolveCurrentUserId(people, nextProducts, loggedInPersonId);
         setCurrentUserId(nextCurrentUserId);
@@ -3384,6 +3815,8 @@ function App({ t }) {
       subtaskSupported: subOk,
       docLinksSupported: docOk,
       projectDocLinksSupported: projDocOk,
+      projectFieldSettingsSupported: fieldOk,
+      accessRoleSupported: roleOk,
     } = await fetchAppData();
     setPeople(people);
     setPathIndex(nextProducts);
@@ -3391,6 +3824,8 @@ function App({ t }) {
     setSubtaskSupported(subOk !== false);
     setDocLinksSupported(docOk !== false);
     setProjectDocLinksSupported(projDocOk !== false);
+    setProjectFieldSettingsSupported(fieldOk !== false);
+    setAccessRoleSupported(roleOk === true);
     const loggedInPersonId = await getLoggedInPersonId(people);
     setCurrentUserId((prev) => {
       const nextCurrentUserId = resolveCurrentUserId(people, nextProducts, loggedInPersonId || prev);
@@ -3400,6 +3835,7 @@ function App({ t }) {
   }, []);
 
   const handleDeleteNode = useCallback(async (nodeId) => {
+    if (!canDeleteNode(accessRole)) return;
     const node = findNode(nodeId);
     if (!node) return;
     await deleteNode(node);
@@ -3408,7 +3844,70 @@ function App({ t }) {
     if (idx >= 0) {
       navigate(buildProductPath(stack.slice(0, idx), effectiveLayout));
     }
-  }, [reloadData, stack, navigate, effectiveLayout]);
+  }, [reloadData, stack, navigate, effectiveLayout, accessRole]);
+
+  const handleDeleteProducts = useCallback(async (productIds) => {
+    const ids = new Set(productIds || []);
+    const nodes = products.filter((p) => ids.has(p.id));
+    for (const node of nodes) {
+      await deleteNode(node);
+    }
+    await reloadData();
+    if (stack.length > 0 && ids.has(stack[0])) {
+      navigate(pathForTab('products', effectiveLayout));
+    }
+  }, [effectiveLayout, navigate, products, reloadData, stack]);
+
+  const persistAttendanceForProject = useCallback(async (projectNode, sessions) => {
+    await saveProjectAttendance(projectNode, sessions);
+    await reloadData();
+  }, [reloadData]);
+
+  const handleAttendanceCheckIn = useCallback(async (projectNode, session) => {
+    const list = [...(projectNode.attendanceSessions || []), session];
+    await persistAttendanceForProject(projectNode, list);
+  }, [persistAttendanceForProject]);
+
+  const handleAttendanceCheckOut = useCallback(async (projectNode, activeSession, pos, auto = false) => {
+    const updated = checkoutSession(activeSession, new Date(), {
+      lat: pos?.lat,
+      lng: pos?.lng,
+      auto,
+    });
+    const list = (projectNode.attendanceSessions || []).map((s) => (
+      s.id === updated.id ? updated : s
+    ));
+    await persistAttendanceForProject(projectNode, list);
+  }, [persistAttendanceForProject]);
+
+  const fieldOpsHandlers = {
+    currentUserId,
+    accessRole,
+    people: PEOPLE,
+    projectFieldSettingsSupported,
+    onAttendanceCheckIn: async (session) => {
+      const proj = projectNode || (currentNode?._source?.table === 'projects' ? currentNode : null);
+      if (!proj) return;
+      await handleAttendanceCheckIn(proj, session);
+    },
+    onAttendanceCheckOut: async (activeSession, pos, auto) => {
+      const proj = projectNode || (currentNode?._source?.table === 'projects' ? currentNode : null);
+      if (!proj) return;
+      await handleAttendanceCheckOut(proj, activeSession, pos, auto);
+    },
+    onOpenSiteSettings: () => {
+      const proj = projectNode || currentNode;
+      if (proj?._source?.table === 'projects') {
+        setSheet({ type: 'siteLocation', nodeId: proj.id });
+      }
+    },
+    onOpenTeamSchedule: (schedule) => {
+      const proj = projectNode || currentNode;
+      if (proj?._source?.table === 'projects') {
+        setSheet({ type: 'teamSchedule', schedule, nodeId: proj.id });
+      }
+    },
+  };
 
   const openProduct = useCallback(
     (node) => navigate(productPathForNode(node.id, pathIndex, effectiveLayout)),
@@ -3560,9 +4059,14 @@ function App({ t }) {
 
   const detailHandlers = {
     onCycleStatus: cycleStatus,
-    onOpenPhoto: (ph) => setSheet({ type: 'photo', photo: ph, nodeId: currentId }),
+    onOpenPhoto: (ph) => setSheet({ type: 'photo', photo: ph, nodeId: currentId, viewOnly: false }),
+    onViewPhoto: (ph) => setSheet({ type: 'photo', photo: ph, nodeId: currentId, viewOnly: true }),
     onEditNote: () => setSheet({ type: 'note' }),
     onEditDeadline: () => setSheet({ type: 'deadline' }),
+    onEditStartedAt: () => {
+      const proj = projectNode || (currentNode?._source?.table === 'projects' ? currentNode : null);
+      if (proj) setSheet({ type: 'startedAt', nodeId: proj.id });
+    },
     onOpenAssignees: () => setSheet({ type: 'assignees' }),
     onAddChild: openAddChild,
     onAddFeature: openAddFeature,
@@ -3590,15 +4094,30 @@ function App({ t }) {
       await persistWorkActionsForNode(node, list);
     },
     onCompleteNode: handleCompleteNode,
+    ...fieldOpsHandlers,
   };
+
+  const scheduleDefaultTab = tab === 'labor' ? 'labor' : 'schedule';
 
   // Decide which screen to render
   let screen;
-  if (tab === 'products') {
+  if (tab === 'attendance') {
+    screen = <AttendanceEmbedView />;
+  } else if (tab === 'schedule' || tab === 'labor') {
+    screen = (
+      <FieldOpsScreen
+        products={isAdmin(accessRole) ? products : visibleProducts}
+        people={PEOPLE}
+        accessRole={accessRole}
+        defaultTab={scheduleDefaultTab}
+        onOpenNode={openChild}
+      />
+    );
+  } else if (tab === 'products') {
     if (useSplitProducts) {
       screen = (
         <DesktopProductsSplit
-          products={products}
+          products={visibleProducts}
           stack={stack}
           currentNode={currentNode}
           parentNode={parentNode}
@@ -3617,12 +4136,14 @@ function App({ t }) {
     } else if (stack.length === 0) {
       screen = (
         <ProductsHome
-          products={products}
+          products={visibleProducts}
           onOpen={openProduct}
           onOpenActions={openNodeActions}
           onComplete={handleCompleteNode}
           onAddProduct={openAddProduct}
           currentUserId={currentUserId}
+          canBulkDelete
+          onDeleteSelected={handleDeleteProducts}
         />
       );
     } else if (!currentNode) {
@@ -3664,26 +4185,26 @@ function App({ t }) {
   } else if (tab === 'subtasks') {
     screen = (
       <SubtasksDashboard
-        products={products}
+        products={visibleProducts}
         onOpenNode={jumpToNode}
       />
     );
   } else if (tab === 'people') {
     if (personId) {
       screen = <PersonDetail
-        personId={personId} products={products}
+        personId={personId} products={visibleProducts}
         onBack={() => navigate(pathForTab('people', effectiveLayout))}
         onOpenNode={jumpToNode}
         onOpenActions={openNodeActions}
         onEditPerson={(person) => setSheet({ type: 'editPerson', personId: person.id })}
       />;
     } else {
-      screen = <PeopleHome products={products} onOpenPerson={(id) => navigate(buildPersonPath(id, effectiveLayout))}/>;
+      screen = <PeopleHome products={visibleProducts} onOpenPerson={(id) => navigate(buildPersonPath(id, effectiveLayout))}/>;
     }
   } else if (tab === 'me' && currentUserId) {
     screen = <PersonDetail
       personId={currentUserId}
-      products={products}
+      products={visibleProducts}
       variant="me"
       onBack={() => navigate(pathForTab('products', effectiveLayout))}
       onOpenNode={jumpToNode}
@@ -3696,6 +4217,7 @@ function App({ t }) {
   const showBottomNav = !isDesktop && (
     (tab === 'products' && stack.length === 0)
     || (tab === 'subtasks')
+    || (tab === 'schedule' || tab === 'labor' || tab === 'attendance')
     || (tab === 'people' && !personId)
     || (tab === 'me')
   );
@@ -3705,7 +4227,7 @@ function App({ t }) {
       {screen}
       {showBottomNav && (
         <BottomNav
-          tab={tab}
+          tab={tab === 'labor' ? 'schedule' : tab}
           onChange={(id) => navigate(pathForTab(id, effectiveLayout))}
           alertCount={myStats.fail + myStats.overdue}
         />
@@ -3714,6 +4236,7 @@ function App({ t }) {
       {sheet && sheet.type === 'photo' && sheetNode && (
         <PhotoSheet
           photo={sheet.photo}
+          viewOnly={sheet.viewOnly}
           canEdit={sheetNode._source?.table === 'tasks'}
           onClose={() => setSheet(null)}
           onAddFiles={(files) => addPhotosFromFiles(sheetNode, files)}
@@ -3735,6 +4258,7 @@ function App({ t }) {
         <WorkActionSheet
           action={sheet.action}
           onClose={() => setSheet(null)}
+          canDelete={canDeleteWorkAction(accessRole, sheet.action, sheetNode, currentUserId)}
           onSave={async (entry) => {
             const list = [...(sheetNode.workActions || [])];
             const idx = list.findIndex((a) => a.id === entry.id);
@@ -3813,8 +4337,8 @@ function App({ t }) {
             parentNode={parentForAdd}
             childLabel={addChildLabels(parentForAdd).child}
             onClose={() => setSheet(null)}
-            onSave={async ({ name, deadline, assignees }) => {
-              const { table, row } = await createChildNode(parentForAdd, { name, deadline, assignees });
+            onSave={async ({ name, startedAt, deadline, assignees }) => {
+              const { table, row } = await createChildNode(parentForAdd, { name, startedAt, deadline, assignees });
               await reloadData();
               const newId = table === 'features' ? row.feature_id : row.task_id;
               navigate(productPathForNode(newId, pathIndex, effectiveLayout));
@@ -3839,6 +4363,49 @@ function App({ t }) {
           }
           onEdit={() => setSheet({ type: 'edit', nodeId: sheetNode.id })}
           onDelete={() => setSheet({ type: 'delete', nodeId: sheetNode.id })}
+          canDelete={canDeleteNode(accessRole)}
+        />
+      )}
+      {sheet && sheet.type === 'startedAt' && sheetNode && (
+        <ProjectStartedAtSheet
+          project={sheetNode}
+          onClose={() => setSheet(null)}
+          onSave={async (iso) => {
+            await saveProjectStartedAt(sheetNode, iso);
+            await reloadData();
+          }}
+        />
+      )}
+      {sheet && sheet.type === 'siteLocation' && sheetNode && (
+        <SiteLocationSheet
+          project={sheetNode}
+          onClose={() => setSheet(null)}
+          onSave={async (site) => {
+            await saveProjectSiteLocation(sheetNode, site);
+            await reloadData();
+          }}
+        />
+      )}
+      {sheet && sheet.type === 'teamSchedule' && sheetNode && (
+        <TeamScheduleSheet
+          project={sheetNode}
+          teams={teamsFromPeople(PEOPLE)}
+          schedule={sheet.schedule}
+          onClose={() => setSheet(null)}
+          onSave={async (entry) => {
+            const list = [...(sheetNode.teamSchedules || [])];
+            const idx = list.findIndex((s) => s.id === entry.id);
+            const row = { ...entry, id: entry.id || newTeamScheduleId() };
+            if (idx >= 0) list[idx] = row;
+            else list.push(row);
+            await saveProjectTeamSchedules(sheetNode, list);
+            await reloadData();
+          }}
+          onDelete={sheet.schedule ? async () => {
+            const next = (sheetNode.teamSchedules || []).filter((s) => s.id !== sheet.schedule.id);
+            await saveProjectTeamSchedules(sheetNode, next);
+            await reloadData();
+          } : undefined}
         />
       )}
       {sheet && sheet.type === 'edit' && sheetNode && (
@@ -3858,8 +4425,12 @@ function App({ t }) {
           <EditPersonSheet
             person={person}
             onClose={() => setSheet(null)}
+            showAccessRole={isAdmin(accessRole)}
             onSave={async (payload) => {
               await savePersonProfile(person.id, payload);
+              if (payload.accessRole) {
+                writeStoredAccessRole(person.id, payload.accessRole);
+              }
               await reloadData();
             }}
           />
