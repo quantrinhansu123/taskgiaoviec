@@ -1901,6 +1901,7 @@ function ProductsHome({
   const [tab, setTab] = useState('active'); // active | done | all
   const [search, setSearch] = useState('');
   const [selectedProductIds, setSelectedProductIds] = useState(() => new Set());
+  const [bulkMode, setBulkMode] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef(null);
@@ -1964,6 +1965,7 @@ function ProductsHome({
     filtered.reduce((count, p) => count + (selectedProductIds.has(p.id) ? 1 : 0), 0)
   ), [filtered, selectedProductIds]);
   const allVisibleSelected = filtered.length > 0 && selectedVisibleCount === filtered.length;
+  const showBulkToolbar = canBulkDelete && (bulkMode || selectedVisibleCount > 0);
 
   const toggleProductSelection = useCallback((productId) => {
     setSelectedProductIds((prev) => {
@@ -1988,6 +1990,7 @@ function ProductsHome({
 
   const clearProductSelection = useCallback(() => {
     setSelectedProductIds(new Set());
+    setBulkMode(false);
   }, []);
 
   const deleteSelectedProducts = useCallback(async () => {
@@ -2019,6 +2022,18 @@ function ProductsHome({
           <div className="title">Tất cả sản phẩm</div>
         </div>
         <button className="icon-btn" aria-label="Tìm"><Icon.search/></button>
+        {!panel && canBulkDelete && (
+          <button
+            className={`icon-btn product-bulk-toggle ${showBulkToolbar ? 'active' : ''}`}
+            aria-label={showBulkToolbar ? 'Đóng chọn nhiều' : 'Chọn nhiều'}
+            onClick={() => {
+              if (showBulkToolbar) clearProductSelection();
+              else setBulkMode(true);
+            }}
+          >
+            {showBulkToolbar ? <Icon.close/> : <Icon.trash/>}
+          </button>
+        )}
         {!panel && (
           <div
             style={{
@@ -2097,7 +2112,7 @@ function ProductsHome({
           </button>
         </div>
 
-        {canBulkDelete && (
+        {showBulkToolbar && (
           <div className="product-bulk-toolbar">
             <button
               type="button"

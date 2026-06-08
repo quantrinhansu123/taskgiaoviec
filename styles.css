@@ -1821,6 +1821,11 @@ textarea:focus, input:focus { border-color: var(--accent); }
   cursor: not-allowed;
 }
 
+.product-bulk-toggle.active {
+  background: var(--ink);
+  color: #fff;
+}
+
 .product-card-more {
   position: absolute;
   z-index: 2;
@@ -2782,12 +2787,12 @@ button,
 
 @media (max-width: 640px) {
   .home-hero {
-    padding: 8px 16px 10px;
+    padding: 4px 16px 8px;
   }
 
   .home-hero h1 {
-    font-size: 25px;
-    margin-bottom: 12px;
+    font-size: 23px;
+    margin: 2px 0 10px;
   }
 
   .home-stats {
@@ -2795,26 +2800,48 @@ button,
   }
 
   .home-stats .s {
-    padding: 10px 11px;
+    padding: 8px 10px;
     border-radius: 11px;
   }
 
+  .home-stats .s .n {
+    font-size: 18px;
+  }
+
+  .home-stats .s .l {
+    font-size: 10px;
+  }
+
+  .home-hero > div:last-child {
+    display: none !important;
+  }
+
   .home-search {
-    height: 38px;
-    margin-bottom: 2px;
+    height: 36px;
+    margin: 6px 16px 0;
+    position: sticky;
+    top: 0;
+    z-index: 3;
   }
 
   .home-tabs {
-    padding-top: 10px;
-    padding-bottom: 8px;
+    padding: 8px 16px 6px;
+    top: 36px;
+    gap: 2px;
+  }
+
+  .home-tab {
+    padding: 7px 2px;
+    margin-right: 14px;
+    font-size: 13px;
   }
 
   .product-bulk-toolbar {
-    top: 41px;
+    top: 80px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
-    padding: 8px 16px;
+    padding: 8px 16px 7px;
   }
 
   .product-bulk-check {
@@ -2846,6 +2873,10 @@ button,
     border-radius: 14px;
     padding-top: 12px;
     padding-bottom: 12px;
+  }
+
+  .product-list {
+    padding-top: 10px;
   }
 
   .subtasks-topbar {
