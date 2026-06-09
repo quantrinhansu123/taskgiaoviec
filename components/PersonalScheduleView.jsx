@@ -13,7 +13,7 @@ import {
   yearMonthKeys,
 } from '../lib/teams.js';
 import { aggregate } from '../lib/data.js';
-import { formatScheduleRange } from '../lib/deadline.js';
+import { currentLocalDateTimeForInput, formatScheduleRange } from '../lib/deadline.js';
 
 function taskProgress(node) {
   if (!node) return 0;
@@ -102,7 +102,7 @@ function PersonalBar({ bar, span, color, lane, onOpenNode }) {
   );
 }
 
-export function PersonalScheduleView({ products, people, embedded = false, onOpenNode }) {
+export function PersonalScheduleView({ products, people, embedded = false, onOpenNode, showControls = true }) {
   const [viewMode, setViewMode] = useState('month');
   const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [personFilter, setPersonFilter] = useState('');
@@ -171,10 +171,11 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
     });
   };
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = currentLocalDateTimeForInput().date;
 
   return (
     <div className={`screen has-nav gantt-screen ${embedded ? 'screen--embedded' : ''}`}>
+      {showControls && (
       <div className="gantt-toolbar">
         <div className="gantt-toolbar-group gantt-toolbar-nav">
           <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(-1)} aria-label="Trước">←</button>
@@ -205,11 +206,12 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
           </select>
         </div>
       </div>
+      )}
 
       <div className="gantt-panel">
         <h2 className="gantt-panel-title">LỊCH THEO CÔNG CÁ NHÂN</h2>
         <div className="gantt-table-wrap personal-gantt-wrap">
-          <table className="gantt-table personal-gantt-table">
+          <table className="gantt-table personal-gantt-table" style={{ '--gantt-cols': columns.length }}>
             <thead>
               <tr>
                 <th className="gantt-th-rowhead">Nhân sự</th>
@@ -245,7 +247,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
                         className="gantt-chart-row"
                         style={{
                           '--gantt-cols': colCount,
-                          '--gantt-row-height': `${Math.max(visible.length, 1) * 38 + 12}px`,
+                          '--gantt-row-height': `${Math.max(visible.length, 1) * 46 + 16}px`,
                         }}
                       >
                         {columns.map((col) => (

@@ -3,11 +3,11 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   PEOPLE,
-  STATUS_META,
   aggregate,
   formatDeadline,
   deadlineTone,
 } from './lib/data.js';
+import { useI18n } from './lib/i18n.jsx';
 import { formatCompletedAt } from './lib/nodeCompletion.js';
 
 // ─── Icons (inline SVG, stroke-based) ─────────────────────────────
@@ -33,13 +33,14 @@ const Icon = {
 
 // ─── Avatars ──────────────────────────────────────────────────────
 function Avatars({ ids = [], max = 4, size = 'md', alwaysShow = false }) {
+  const { t } = useI18n();
   const list = (ids || []).map((id) => PEOPLE.find((p) => p.id === id)).filter(Boolean);
   const sizeClass = size === 'lg' ? 'lg' : size === 'sm' ? 'sm' : '';
 
   if (list.length === 0) {
     if (!alwaysShow) return null;
     return (
-      <div className={`avatars avatars--empty ${sizeClass}`} title="Chưa giao việc">
+      <div className={`avatars avatars--empty ${sizeClass}`} title={t('notAssigned')}>
         <div className="av av-placeholder">
           <Icon.user/>
         </div>
@@ -61,7 +62,8 @@ function Avatars({ ids = [], max = 4, size = 'md', alwaysShow = false }) {
 
 // ─── Status chip ──────────────────────────────────────────────────
 function StatusChip({ status }) {
-  const m = STATUS_META[status] || STATUS_META.todo;
+  const { statusMeta } = useI18n();
+  const m = statusMeta[status] || statusMeta.todo;
   return (
     <span className={`chip status-${status}`}>
       <span className="dot"/>{m.label}
@@ -69,9 +71,11 @@ function StatusChip({ status }) {
   );
 }
 
-function DeadlineChip({ iso, status, onClick, emptyLabel = 'Ghi deadline' }) {
+function DeadlineChip({ iso, status, onClick, emptyLabel }) {
+  const { t } = useI18n();
+  const resolvedEmpty = emptyLabel ?? t('deadlineEmpty');
   const tone = deadlineTone(iso, status);
-  const label = iso ? formatDeadline(iso) : emptyLabel;
+  const label = iso ? formatDeadline(iso) : resolvedEmpty;
   const className = `chip deadline ${tone !== 'neutral' ? tone : ''} ${!iso ? 'deadline-empty' : ''} ${onClick ? 'deadline-btn' : ''}`;
 
   if (onClick) {
@@ -103,11 +107,12 @@ function StatusBlob({ status }) {
 
 // ─── Progress bar ─────────────────────────────────────────────────
 function ProgressBar({ stats }) {
+  const { t } = useI18n();
   const { total, done, doing, fail } = stats;
   if (total === 0) return null;
   const pct = n => `${(n / total) * 100}%`;
   return (
-    <div className="progress" aria-label={`${done}/${total} đạt`}>
+    <div className="progress" aria-label={t('progressAchieved', { done, total })}>
       {done > 0 && <span className="seg-done" style={{ width: pct(done) }}/>}
       {fail > 0 && <span className="seg-fail" style={{ width: pct(fail) }}/>}
       {doing > 0 && <span className="seg-doing" style={{ width: pct(doing) }}/>}
@@ -169,97 +174,107 @@ function PhotoThumb({ photo, onClick, onView }) {
   );
 }
 
-// ─── Compact item (child card) ────────────────────────────────────
+// ─── Compact item (child card — same layout as product card) ───────
 function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, active = false }) {
+  const { t } = useI18n();
   const stats = aggregate(node);
   const hasChildren = node.children && node.children.length > 0;
   const isFeature = node?._source?.table === 'features';
-  const showProgress = isFeature && hasChildren && stats.total > 0;
+  const childCount = (node.children || []).length;
   const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
   const tone = deadlineTone(node.deadline, node.status);
 
   return (
     <div
-      className={`item ${node.status === 'fail' ? 'fail' : ''} ${node.status === 'done' ? 'done' : ''} ${active ? 'item--active' : ''}`}
+      className={`product-card item-card item ${node.status === 'fail' ? 'fail' : ''} ${node.status === 'done' ? 'done' : ''} ${active ? 'item--active' : ''}`}
       onClick={onOpen}
     >
-      <StatusBlob status={node.status} />
-      <div className="item-main">
-        <div className={`item-title ${node.status === 'done' ? 'strike' : ''}`}>{node.name}</div>
-        {showProgress && (
-          <div className="item-progress" onClick={(e) => e.stopPropagation()}>
-            <ProgressBar stats={stats}/>
-            <span className="item-progress-pct">{pct}%</span>
-          </div>
-        )}
-        <div className="item-foot">
-          <div className="item-sub">
-            {node.deadline && (
-              <span className={tone !== 'neutral' ? `deadline-tone-${tone}` : ''}>
-                {formatDeadline(node.deadline)}
-              </span>
-            )}
-            {showProgress && (
-              <>
-                <span className="sep"/>
-                <span><b>{stats.done}</b>/{stats.total} việc</span>
-                {stats.fail > 0 && (
-                  <>
-                    <span className="sep"/>
-                    <span className="item-progress-fail">{stats.fail} lỗi</span>
-                  </>
-                )}
-              </>
-            )}
-            {hasChildren && !showProgress && (
-              <>
-                <span className="sep"/>
-                <span><b>{stats.done}</b>/{stats.total}</span>
-              </>
-            )}
-            {node.photos && node.photos.length > 0 && (
-              <>
-                <span className="sep"/>
-                <span>{node.photos.length} ảnh</span>
-              </>
-            )}
-            {node.note && (
-              <>
-                <span className="sep"/>
-                <Icon.note style={{ opacity: 0.6 }}/>
-              </>
-            )}
-            {node.completedAt && (
-              <>
-                <span className="sep"/>
-                <span className="item-completed-at">HT {formatCompletedAt(node.completedAt)}</span>
-              </>
-            )}
-          </div>
-          <div className="item-actions">
-            {typeof onComplete === 'function' && !node.completedAt && (
-              <button
-                type="button"
-                className="item-complete-btn"
-                aria-label="Hoàn thành"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onComplete(node);
-                }}
-              >
-                <Icon.check/>
-              </button>
-            )}
-            {node.issues > 0 && <div className="mini-issue">{node.issues}</div>}
-            <Avatars ids={node.assignees} size="sm" max={3} alwaysShow/>
-            {onOpenActions && (
-              <button type="button" className="item-more icon-btn" aria-label="Tùy chọn" onClick={onOpenActions}>
-                <Icon.more/>
-              </button>
-            )}
-            <Icon.chev className="chev"/>
+      <div className="pc-row1">
+        <div className="pc-head">
+          <div className="pc-title-line">
+            <span className={`pc-title ${node.status === 'done' ? 'strike' : ''}`}>{node.name}</span>
           </div>
         </div>
+        <div className="product-card-assignees" onClick={(e) => e.stopPropagation()}>
+          <Avatars ids={node.assignees} size="sm" max={3} alwaysShow/>
+        </div>
+        {onOpenActions && (
+          <button
+            type="button"
+            className="product-card-more icon-btn"
+            aria-label={t('options')}
+            onClick={(e) => { e.stopPropagation(); onOpenActions(node); }}
+          >
+            <Icon.more/>
+          </button>
+        )}
+      </div>
+      <div className="pc-meta">
+        <StatusChip status={node.status}/>
+        {node.deadline && (
+          <span className={`chip deadline ${tone !== 'neutral' ? tone : ''}`}>
+            <Icon.cal/>{formatDeadline(node.deadline)}
+          </span>
+        )}
+        {node.issues > 0 && (
+          <span className="pc-issue-pill">
+            <Icon.warn/> {node.issues}
+          </span>
+        )}
+      </div>
+      <div className="pc-foot">
+        <div className="pc-counts">
+          {isFeature && hasChildren && (
+            <span><b>{childCount}</b> {t('labelWorkItems')}</span>
+          )}
+          {stats.total > 0 && (
+            <>
+              {isFeature && hasChildren && <span className="dot-sep"/>}
+              <span><b>{stats.done}</b>/{stats.total} {t('labelTasks')}</span>
+            </>
+          )}
+          {stats.fail > 0 && (
+            <>
+              <span className="dot-sep"/>
+              <span style={{ color: 'var(--accent-ink)', fontWeight: 600 }}>{stats.fail} {t('labelErrors')}</span>
+            </>
+          )}
+          {node.photos && node.photos.length > 0 && (
+            <>
+              <span className="dot-sep"/>
+              <span>{node.photos.length} {t('labelPhotos')}</span>
+            </>
+          )}
+          {node.note && (
+            <>
+              <span className="dot-sep"/>
+              <Icon.note style={{ opacity: 0.6 }}/>
+            </>
+          )}
+          {node.completedAt && (
+            <>
+              <span className="dot-sep"/>
+              <span className="item-completed-at">{t('completedAtShort')} {formatCompletedAt(node.completedAt)}</span>
+            </>
+          )}
+        </div>
+        <div className="pc-progress-row">
+          <ProgressBar stats={stats}/>
+          <div className="pct">{pct}%</div>
+        </div>
+        {typeof onComplete === 'function' && !node.completedAt && (
+          <button
+            type="button"
+            className="work-action-complete-btn product-card-complete-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onComplete(node);
+            }}
+          >
+            <Icon.check/>
+            {t('workComplete')}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -401,7 +401,7 @@ function buildIndex(root) {
 const INDEX = buildIndex({ id: 'root', children: DATA.products });
 
 // Level label by depth
-const LEVEL_LABEL = ['Sản phẩm', 'Hạng mục', 'Công việc', 'Chi tiết'];
+const LEVEL_LABEL = ['Dự án', 'Hạng mục', 'Công việc', 'Chi tiết'];
 
 // Aggregate counts for a node (recursive over children + self in leaves)
 function aggregate(node) {

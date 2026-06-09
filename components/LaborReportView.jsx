@@ -2,8 +2,10 @@ import { useMemo } from 'react';
 import { buildJobLaborReport, formatHours } from '../lib/laborReport.js';
 import { formatDurationMinutes } from '../lib/workActions.js';
 import { isAdmin } from '../lib/permissions.js';
+import { useI18n } from '../lib/i18n.jsx';
 
 export function LaborReportView({ products, people, accessRole, embedded = false }) {
+  const { t } = useI18n();
   const report = useMemo(
     () => buildJobLaborReport(products, people),
     [products, people],
@@ -15,10 +17,10 @@ export function LaborReportView({ products, people, accessRole, embedded = false
     return (
       <div className="screen has-nav">
         <div className="screen-head">
-          <h1 className="screen-title">Báo cáo giờ công</h1>
+          <h1 className="screen-title">{t('laborReportTitle')}</h1>
         </div>
         <p className="field-note" style={{ padding: '16px 20px' }}>
-          Chỉ Admin mới xem được báo cáo tổng hợp giờ công theo công trình.
+          {t('laborAdminOnly')}
         </p>
       </div>
     );
@@ -28,16 +30,16 @@ export function LaborReportView({ products, people, accessRole, embedded = false
     <div className={`screen has-nav labor-report-screen ${embedded ? 'screen--embedded' : ''}`}>
       {!embedded && (
         <div className="screen-head">
-          <h1 className="screen-title">Báo cáo giờ công theo Job</h1>
+          <h1 className="screen-title">{t('laborReportJobTitle')}</h1>
           <p className="screen-sub">
-            Tổng {formatHours(grandTotal / 60)} trên {report.length} công trình có dữ liệu
+            {t('laborSub', { hours: formatHours(grandTotal / 60), count: report.length })}
           </p>
         </div>
       )}
 
       <div className="labor-report-list">
         {report.length === 0 ? (
-          <p className="field-note empty-state">Chưa có dữ liệu chấm công hoặc hành động nào.</p>
+          <p className="field-note empty-state">{t('laborEmpty')}</p>
         ) : report.map((row) => (
           <div key={row.projectId} className="labor-report-card">
             <div className="labor-report-head">

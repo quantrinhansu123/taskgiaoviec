@@ -2,10 +2,12 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Root } from './app.jsx';
+import { I18nProvider } from './lib/i18n.jsx';
 import './styles.css';
 import './styles/ui-system.css';
 
 createRoot(document.getElementById('root')).render(
+  <I18nProvider>
   <BrowserRouter>
     <Routes>
       <Route path="/" element={<Navigate to="/san-pham" replace />} />
@@ -35,7 +37,12 @@ createRoot(document.getElementById('root')).render(
       <Route path="/attendance" element={<Root />} />
       <Route path="/toi" element={<Root />} />
       <Route path="/me" element={<Root />} />
+      <Route path="/cai-dat" element={<Root />} />
+      <Route path="/settings" element={<Root />} />
+      <Route path="/desktop/cai-dat" element={<Root />} />
+      <Route path="/desktop/settings" element={<Root />} />
       <Route path="*" element={<Navigate to="/san-pham" replace />} />
     </Routes>
-  </BrowserRouter>,
+  </BrowserRouter>
+  </I18nProvider>,
 );

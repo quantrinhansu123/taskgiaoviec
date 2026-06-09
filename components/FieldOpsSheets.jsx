@@ -3,7 +3,7 @@ import { Sheet } from '../components.jsx';
 import { DateTimeFields } from './DateTimeFields.jsx';
 import { getCurrentPosition, formatCoords } from '../lib/geolocation.js';
 import { DEFAULT_RADIUS_M, RADIUS_PRESETS } from '../lib/siteLocation.js';
-import { combineDeadlineLocal, splitDeadlineForInput } from '../lib/deadline.js';
+import { combineDeadlineLocal, splitDeadlineForInput, currentLocalDateTimeForInput } from '../lib/deadline.js';
 
 export function SiteLocationSheet({ project, onClose, onSave }) {
   const existing = project?.siteLocation;
@@ -139,7 +139,7 @@ export function TeamScheduleSheet({ project, teams = [], schedule, onClose, onSa
   const [err, setErr] = useState('');
 
   const stampNowStart = () => {
-    const s = splitDeadlineForInput(new Date().toISOString());
+    const s = currentLocalDateTimeForInput();
     setStartDate(s.date);
     setStartTime(s.time || resolveTime(s.date, '', true));
   };
@@ -239,7 +239,7 @@ export function ProjectStartedAtSheet({ project, onClose, onSave }) {
   const [err, setErr] = useState('');
 
   const stampNow = () => {
-    const s = splitDeadlineForInput(new Date().toISOString());
+    const s = currentLocalDateTimeForInput();
     setDate(s.date);
     setTime(s.time || resolveTime(s.date, '', true));
   };

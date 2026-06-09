@@ -6,39 +6,62 @@ import { isAdmin } from '../lib/permissions.js';
 
 export function FieldOpsScreen({ products, people, accessRole, defaultTab = 'schedule', onOpenNode }) {
   const [tab, setTab] = useState(defaultTab);
+  const [controlsOpen, setControlsOpen] = useState(false);
   const showLabor = isAdmin(accessRole);
+  const activeTabLabel = tab === 'schedule' ? 'Lịch đội' : tab === 'personal' ? 'Lịch cá nhân' : 'Báo cáo giờ';
 
   return (
     <div className="field-ops-screen">
-      <div className="field-ops-tabs">
+      <div className="field-ops-controls-head">
         <button
           type="button"
-          className={`filter-pill ${tab === 'schedule' ? 'active' : ''}`}
-          onClick={() => setTab('schedule')}
+          className="field-ops-controls-toggle"
+          aria-expanded={controlsOpen}
+          onClick={() => setControlsOpen((open) => !open)}
         >
-          Lịch đội
+          <span>{controlsOpen ? 'Ẩn tùy chọn' : 'Tùy chọn lịch'}</span>
+          <strong>{activeTabLabel}</strong>
         </button>
-        <button
-          type="button"
-          className={`filter-pill ${tab === 'personal' ? 'active' : ''}`}
-          onClick={() => setTab('personal')}
-        >
-          Lịch cá nhân
-        </button>
-        {showLabor && (
+      </div>
+
+      {controlsOpen && (
+        <div className="field-ops-tabs">
           <button
             type="button"
-            className={`filter-pill ${tab === 'labor' ? 'active' : ''}`}
-            onClick={() => setTab('labor')}
+            className={`filter-pill ${tab === 'schedule' ? 'active' : ''}`}
+            onClick={() => setTab('schedule')}
           >
-            Báo cáo giờ
+            Lịch đội
           </button>
-        )}
-      </div>
+          <button
+            type="button"
+            className={`filter-pill ${tab === 'personal' ? 'active' : ''}`}
+            onClick={() => setTab('personal')}
+          >
+            Lịch cá nhân
+          </button>
+          {showLabor && (
+            <button
+              type="button"
+              className={`filter-pill ${tab === 'labor' ? 'active' : ''}`}
+              onClick={() => setTab('labor')}
+            >
+              Báo cáo giờ
+            </button>
+          )}
+        </div>
+      )}
+
       {tab === 'schedule' ? (
-        <TeamScheduleView products={products} people={people} embedded />
+        <TeamScheduleView products={products} people={people} embedded showControls={controlsOpen} />
       ) : tab === 'personal' ? (
-        <PersonalScheduleView products={products} people={people} embedded onOpenNode={onOpenNode} />
+        <PersonalScheduleView
+          products={products}
+          people={people}
+          embedded
+          onOpenNode={onOpenNode}
+          showControls={controlsOpen}
+        />
       ) : (
         <LaborReportView products={products} people={people} accessRole={accessRole} embedded />
       )}

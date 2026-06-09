@@ -15,7 +15,8 @@ import {
   addDays,
   teamsFromPeople,
 } from '../lib/teams.js';
-import { formatScheduleRange } from '../lib/deadline.js';
+import { currentLocalDateTimeForInput, formatScheduleRange } from '../lib/deadline.js';
+import { useI18n } from '../lib/i18n.jsx';
 
 function KpiCard({ label, value, suffix, ring }) {
   return (
@@ -75,7 +76,8 @@ function GanttProgressBar({ bar, span, color, lane = 0 }) {
   );
 }
 
-export function TeamScheduleView({ products, people, embedded = false }) {
+export function TeamScheduleView({ products, people, embedded = false, showControls = true }) {
+  const { t } = useI18n();
   const teams = useMemo(() => teamsFromPeople(people), [people]);
   const [viewMode, setViewMode] = useState('month');
   const [teamFilter, setTeamFilter] = useState('');
@@ -132,17 +134,18 @@ export function TeamScheduleView({ products, people, embedded = false }) {
     });
   };
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = currentLocalDateTimeForInput().date;
 
   return (
     <div className={`screen has-nav gantt-screen ${embedded ? 'screen--embedded' : ''}`}>
       {!embedded && (
         <div className="screen-head">
-          <h1 className="screen-title">Lịch làm việc theo Đội</h1>
-          <p className="screen-sub">Timeline Gantt — biết ngay đội nào đang ở Job nào</p>
+          <h1 className="screen-title">{t('scheduleTitle')}</h1>
+          <p className="screen-sub">{t('scheduleSub')}</p>
         </div>
       )}
 
+      {showControls && (
       <div className="gantt-toolbar">
         <div className="gantt-toolbar-group gantt-toolbar-nav">
           <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(-1)} aria-label="Trước">←</button>
@@ -173,12 +176,13 @@ export function TeamScheduleView({ products, people, embedded = false }) {
           </select>
         </div>
       </div>
+      )}
 
       <div className="gantt-panel">
         <h2 className="gantt-panel-title">KẾ HOẠCH CÔNG TRÌNH</h2>
 
         <div className="gantt-table-wrap">
-          <table className="gantt-table">
+          <table className="gantt-table" style={{ '--gantt-cols': columns.length }}>
             <thead>
               <tr>
                 <th className="gantt-th-rowhead">Đội thợ</th>
@@ -218,7 +222,7 @@ export function TeamScheduleView({ products, people, embedded = false }) {
                         className="gantt-chart-row"
                         style={{
                           '--gantt-cols': colCount,
-                          '--gantt-row-height': `${Math.max(visibleBarCount, 1) * 38 + 12}px`,
+                          '--gantt-row-height': `${Math.max(visibleBarCount, 1) * 46 + 16}px`,
                         }}
                       >
                         {columns.map((col) => (

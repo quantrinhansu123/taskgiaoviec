@@ -8,7 +8,7 @@ import {
   saveNodeFull,
   savePersonProfile,
   saveTaskPhotos,
-  saveTaskWorkActions,
+  saveNodeWorkActions,
   saveFeatureDocLinks,
   saveProjectDocLinks,
   completeNode,
@@ -37,9 +37,14 @@ import {
 } from './lib/routes.js';
 import { RouteLinks } from './lib/RouteLinks.jsx';
 import { DesktopShell } from './components/DesktopShell.jsx';
+import { SettingsView } from './components/SettingsView.jsx';
+import { DiscussionChat } from './components/DiscussionChat.jsx';
+import { collectProjectPeople } from './lib/projectPeople.js';
+import { APP_LOGO, APP_NAME } from './lib/brand.js';
+import { useI18n, formatTodayHeadline } from './lib/i18n.jsx';
 import { swapLayoutPath } from './lib/routes.js';
 import { useEffectiveLayout } from './lib/useEffectiveLayout.js';
-import { combineDeadlineLocal, splitDeadlineForInput, formatScheduleRange } from './lib/deadline.js';
+import { combineDeadlineLocal, splitDeadlineForInput, currentLocalDateTimeForInput, formatScheduleRange } from './lib/deadline.js';
 import { filesToPhotos, getImageFilesFromClipboard } from './lib/photos.js';
 import {
   newWorkActionId,
@@ -49,6 +54,13 @@ import {
   actionDurationMinutes,
   completeWorkAction,
   isWorkActionInProgress,
+  WORK_ACTION_KINDS,
+  groupWorkActionsByKind,
+  normalizeWorkActionKind,
+  isSimpleNoteAction,
+  isDiscussionAction,
+  isEvaluationAction,
+  newDiscussionMessage,
 } from './lib/workActions.js';
 import { formatCompletedAt } from './lib/nodeCompletion.js';
 import {
@@ -369,6 +381,7 @@ function DesktopSubtaskPanel({
   onToggleSelected, onSelectAll, onClearSelected, onPrintSelected,
   onOpen, onOpenActions, onComplete, onAddSubtask,
 }) {
+  const { t } = useI18n();
   const showBulkActions = items.length > 0;
   return (
     <div className="desktop-subtask-panel">
@@ -386,7 +399,7 @@ function DesktopSubtaskPanel({
                 className="btn btn-secondary"
                 onClick={allSelected ? onClearSelected : onSelectAll}
               >
-                {allSelected ? 'Bỏ chọn' : 'Chọn tất cả'}
+                {allSelected ? t('deselectAll') : t('selectAll')}
               </button>
               <button
                 type="button"
@@ -394,7 +407,7 @@ function DesktopSubtaskPanel({
                 disabled={selectedCount === 0}
                 onClick={onPrintSelected}
               >
-                In ({selectedCount})
+                {t('printCount', { count: selectedCount })}
               </button>
                 </>
               )}
@@ -404,7 +417,7 @@ function DesktopSubtaskPanel({
                   className="btn btn-primary"
                   onClick={onAddSubtask}
                 >
-                  <Icon.plus/> Thêm sub-task
+                  <Icon.plus/> {t('addSubtask')}
                 </button>
               )}
             </div>
@@ -413,7 +426,7 @@ function DesktopSubtaskPanel({
       </div>
       <div className="desktop-subtask-panel-list">
         {items.length === 0 ? (
-          <div className="empty">Chưa có sub-task.</div>
+          <div className="empty">{t('noSubtasks')}</div>
         ) : (
           items.map((item) => {
             const selected = selectedIds?.has(item.id);
@@ -427,7 +440,7 @@ function DesktopSubtaskPanel({
                     onToggleSelected?.(item.id);
                   }}
                   aria-pressed={selected}
-                  aria-label={`${selected ? 'Bỏ chọn' : 'Chọn'} sub-task ${item.name}`}
+                  aria-label={`${selected ? t('deselect') : t('select')} sub-task ${item.name}`}
                 >
                   {selected && <Icon.check/>}
                 </button>
@@ -436,7 +449,7 @@ function DesktopSubtaskPanel({
                   depth={3}
                   active={item.id === activeId}
                   onOpen={() => onOpen?.(item)}
-                  onOpenActions={onOpenActions ? (e) => { e.stopPropagation(); onOpenActions(item); } : undefined}
+                  onOpenActions={onOpenActions}
                   onComplete={onComplete}
                 />
               </div>
@@ -471,11 +484,24 @@ function collectPhotosFromTree(node) {
   return out;
 }
 
+// ─── Modal nội dung Ghi chú / Đánh giá / Trao đổi ─────────────────
+function WorkEntryModal({
+  title,
+  onClose,
+  children,
+}) {
+  return (
+    <Sheet title={title} onClose={onClose} className="sheet--entry-panel">
+      <div className="entry-panel-body">{children}</div>
+    </Sheet>
+  );
+}
+
 // ─── NodeDetail screen ────────────────────────────────────────────
 function NodeDetail({
   node, depth, parent, t = {}, onOpenChild, onBack, onOpenPhoto, onViewPhoto, onEditNote, onEditDeadline,
   onOpenAssignees, onCycleStatus, onAddChild, onAddFeature, onOpenActions, onChildActions,
-  onPastePhotos, onOpenWorkAction, onCompleteWorkAction, onDeletePhoto, onOpenDocLink, onDeleteDocLink, onCompleteNode,
+  onPastePhotos, onOpenWorkAction, onCompleteWorkAction, onSendDiscussion, onDeletePhoto, onOpenDocLink, onDeleteDocLink, onCompleteNode,
   onEditStartedAt,
   embedded = false, showBack = true, hideChildrenList = false,
   projectNode = null, subtaskSupported = true, docLinksSupported = true, projectDocLinksSupported = true,
@@ -484,40 +510,110 @@ function NodeDetail({
   onAttendanceCheckIn, onAttendanceCheckOut, onOpenSiteSettings, onOpenTeamSchedule,
   projectFieldSettingsSupported = true,
 }) {
+  const { t: translate, levelLabels, statusMeta } = useI18n();
   const stats = aggregate(node);
   const listParent = resolveListParent(node, parent);
   const childNodes = listParent ? (listParent.children || []) : (node.children || []);
   const hasChildren = childNodes.length > 0;
   const { child: addChildLabel, section: childrenLabel } = addChildLabels(listParent || node);
-  const myLabel = LEVEL_LABEL[depth] || 'Mục';
+  const myLabel = levelLabels[depth] || LEVEL_LABEL[depth] || 'Mục';
+  const detailTopLabel = parent
+    ? `${LEVEL_LABEL[depth - 1]} · ${parent.name}`
+    : [myLabel, node.customerName].filter(Boolean).join(' · ');
+  const workKindLabels = useMemo(() => ({
+    note: translate('workKindNote'),
+    evaluation: translate('workKindEvaluation'),
+    discussion: translate('workKindDiscussion'),
+  }), [translate]);
   const canAddChild = listParent && typeof onAddChild === 'function';
   const showSiblingList = listParent && listParent.id !== node.id;
   const canPastePhoto = node?._source?.table === 'tasks' && typeof onPastePhotos === 'function';
   const canAddPhoto = node?._source?.table === 'tasks';
-  const canLogWork = node?._source?.table === 'tasks' && typeof onOpenWorkAction === 'function';
   const canCompleteNode = typeof onCompleteNode === 'function';
   const showCompleteNodeBtn = canCompleteNode && !node.completedAt;
   const isNodeDone = node.status === 'done' || Boolean(node.completedAt);
   const nodeTable = node?._source?.table;
   const isProject = nodeTable === 'projects';
   const isFeature = nodeTable === 'features';
-  const canShowDocLinks = (isProject || isFeature) && docLinksSupported && typeof onOpenDocLink === 'function';
-  const canAddDocLink = canShowDocLinks && (
-    (isFeature && docLinksSupported) || (isProject && projectDocLinksSupported)
-  );
-  const docLinks = useMemo(() => {
-    if (isProject) return collectDocLinksFromTree(node);
-    if (isFeature) return node.docLinks || [];
-    return [];
-  }, [node, isProject, isFeature]);
+  const showInlineProjectOps = false;
   const workActions = useMemo(() => {
     const list = node.workActions || [];
     return [...list].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
   }, [node.workActions]);
-  const displayPhotos = useMemo(() => (
-    node?._source?.table === 'tasks' ? (node.photos || []) : collectPhotosFromTree(node)
-  ), [node]);
-
+  const workActionsByKind = useMemo(
+    () => groupWorkActionsByKind(workActions),
+    [workActions],
+  );
+  const projectPeople = useMemo(
+    () => collectProjectPeople(projectNode || (isProject ? node : null), people.length ? people : PEOPLE),
+    [projectNode, node, isProject, people],
+  );
+  const [discussionSending, setDiscussionSending] = useState(false);
+  const renderWorkActionCard = (action) => {
+    const kind = normalizeWorkActionKind(action.kind);
+    if (isDiscussionAction(action)) return null;
+    if (isSimpleNoteAction(action) || isEvaluationAction(action)) {
+      const text = (action.note || action.title || '').replace(/\r\n/g, '\n');
+      return (
+        <div key={action.id} className="work-note-card">
+          <NoteBlock text={text} onEdit={() => onOpenWorkAction(action)} />
+        </div>
+      );
+    }
+    const mins = actionDurationMinutes(action);
+    const inProgress = isWorkActionInProgress(action);
+    const completed = action.status === 'completed';
+    return (
+      <div
+        key={action.id}
+        className={`work-action-card${inProgress ? ' work-action-card--active' : ''}${completed ? ' work-action-card--done' : ''}`}
+      >
+        <button
+          type="button"
+          className="work-action-main"
+          onClick={() => onOpenWorkAction(action)}
+        >
+          <span className="work-action-icon" aria-hidden>
+            {inProgress ? '◐' : <Icon.check/>}
+          </span>
+          <span className="work-action-body">
+            <span className="work-action-title-row">
+              <span className={`work-action-kind-badge work-action-kind-badge--${kind}`}>
+                {workKindLabels[kind]}
+              </span>
+              <span className="work-action-title">{action.title}</span>
+              {completed && (
+                <span className="work-action-badge">{translate('workCompleted')}</span>
+              )}
+            </span>
+            {action.note && (
+              <span className="work-action-note">{action.note.replace(/\r\n/g, '\n')}</span>
+            )}
+            <span className="work-action-time">{formatWorkActionRange(action)}</span>
+            {mins != null && (
+              <span className="work-action-duration">{formatDurationMinutes(mins)}</span>
+            )}
+          </span>
+          <Icon.chev className="work-action-chev"/>
+        </button>
+        {inProgress && typeof onCompleteWorkAction === 'function' && (
+          <button
+            type="button"
+            className="work-action-complete-btn"
+            onClick={() => onCompleteWorkAction(action)}
+          >
+            {translate('workComplete')}
+          </button>
+        )}
+      </div>
+    );
+  };
+  const canLogWork = (
+    node?._source?.table === 'tasks'
+    || node?._source?.table === 'features'
+    || (isProject && projectFieldSettingsSupported)
+  ) && typeof onOpenWorkAction === 'function';
+  const showEntriesSection = canLogWork;
   useEffect(() => {
     if (!canPastePhoto) return undefined;
     const onPaste = (e) => {
@@ -531,8 +627,18 @@ function NodeDetail({
   }, [canPastePhoto, onPastePhotos]);
 
   const [filter, setFilter] = useState('all'); // all | fail | doing | todo | done
+  const [entryModal, setEntryModal] = useState(null); // note | evaluation | discussion | null
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef(null);
+
+  const openEntryModal = useCallback((kind) => {
+    if (!canLogWork) return;
+    setEntryModal(kind);
+  }, [canLogWork]);
+
+  useEffect(() => {
+    setEntryModal(null);
+  }, [node.id]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -556,57 +662,69 @@ function NodeDetail({
   }, [childNodes, hasChildren]);
 
   return (
-    <div className={`screen ${embedded ? 'screen--embedded' : ''}`}>
+    <div className={`screen screen--detail ${embedded ? 'screen--embedded' : ''}`}>
       {/* TopBar */}
-      <div className={`topbar ${scrolled ? 'scrolled' : ''} ${embedded ? 'topbar--embedded' : ''}`}>
+      <div className={`topbar topbar--detail ${scrolled ? 'scrolled' : ''} ${embedded ? 'topbar--embedded' : ''}`}>
         {showBack ? (
-          <button className="icon-btn" onClick={onBack} aria-label="Quay lại">
+          <button className="icon-btn" onClick={onBack} aria-label={translate('back')}>
             <Icon.back/>
           </button>
         ) : (
           <div className="icon-btn icon-btn--spacer" aria-hidden/>
         )}
-        <div className="title-wrap">
-          <div className="crumb">
-            {parent ? `${LEVEL_LABEL[depth-1]} · ${parent.name}` : 'Tất cả sản phẩm'}
+        <div className="title-wrap title-wrap--detail-inline">
+          <div className="detail-inline-title">
+            <span className="detail-inline-crumb">{detailTopLabel}</span>
+            <span className="detail-inline-name">{node.name}</span>
           </div>
-          <div className="title">{scrolled ? node.name : myLabel}</div>
         </div>
-        <button className="icon-btn" aria-label="Tìm"><Icon.search/></button>
-        <button className="icon-btn" aria-label="Tùy chọn" onClick={() => onOpenActions?.(node)}><Icon.more/></button>
+        <button className="icon-btn" aria-label={translate('search')}><Icon.search/></button>
+        <button className="icon-btn" aria-label={translate('options')} onClick={() => onOpenActions?.(node)}><Icon.more/></button>
       </div>
 
       <div className="scroll" ref={scrollRef}>
+        <div className="detail-head detail-head--compact">
         {/* Hero */}
-        <div className="hero">
-          <h1 className="hero-title-line">
-            {depth === 0 && node.customerName && (
-              <>
-                <span className="hero-customer">{node.customerName}</span>
-                <span className="hero-title-sep" aria-hidden>·</span>
-              </>
-            )}
-            <span className="hero-title-name">{node.name}</span>
-          </h1>
-
-          <div className="meta-row">
-            <button onClick={onCycleStatus} style={{ border:0, background:'none', padding:0, cursor:'pointer' }}>
-              <StatusChip status={node.status}/>
-            </button>
-            <DeadlineChip iso={node.deadline} status={node.status} onClick={onEditDeadline}/>
-            {isProject && typeof onEditStartedAt === 'function' && (
-              <DeadlineChip
-                iso={node.startedAt}
-                status={node.status}
-                onClick={onEditStartedAt}
-                emptyLabel="Ngày giờ bắt đầu"
-              />
-            )}
-            {node.issues > 0 && (
-              <span className="chip count has-issue">
-                <Icon.warn/> {node.issues} lỗi
-              </span>
-            )}
+        <div className="hero hero--compact">
+          <div className="hero-toolbar">
+            <div className="meta-row">
+              <button type="button" className="meta-chip-btn" onClick={onCycleStatus}>
+                <StatusChip status={node.status}/>
+              </button>
+              <DeadlineChip iso={node.deadline} status={node.status} onClick={onEditDeadline}/>
+              {isProject && typeof onEditStartedAt === 'function' && (
+                <DeadlineChip
+                  iso={node.startedAt}
+                  status={node.status}
+                  onClick={onEditStartedAt}
+                  emptyLabel={translate('startDateTimeLabel')}
+                />
+              )}
+              {node.issues > 0 && (
+                <span className="chip count has-issue">
+                  <Icon.warn/> {node.issues} lỗi
+                </span>
+              )}
+            </div>
+            <div className="hero-assignee">
+              <button type="button" className="assignee-row-btn" onClick={onOpenAssignees}>
+                {node.assignees.length > 0 ? (
+                  <>
+                    <Avatars ids={node.assignees} size="sm" max={3}/>
+                    <span className="hero-assignee-text">
+                      {node.assignees.length} người · Thêm
+                    </span>
+                  </>
+                ) : (
+                  <span className="hero-assignee-empty">
+                    <Icon.user/> Giao việc
+                  </span>
+                )}
+              </button>
+              <button type="button" className="icon-btn icon-btn--sm" aria-label="Báo">
+                <Icon.bell/>
+              </button>
+            </div>
           </div>
 
           {canCompleteNode && (
@@ -638,25 +756,6 @@ function NodeDetail({
             </div>
           )}
 
-          {/* Assignees row */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2, marginBottom: 12 }}>
-            <button type="button" className="assignee-row-btn" onClick={onOpenAssignees}>
-              {node.assignees.length > 0 ? (
-                <>
-                  <Avatars ids={node.assignees} size="lg" max={5}/>
-                  <span style={{ fontSize:12, color:'var(--muted)', fontWeight:500 }}>
-                    {node.assignees.length} người · Thêm
-                  </span>
-                </>
-              ) : (
-                <span style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:13, color:'var(--accent)', fontWeight:600 }}>
-                  <Icon.user/> Giao việc cho ai?
-                </span>
-              )}
-            </button>
-            <button className="icon-btn" aria-label="Báo" style={{ width: 32, height: 32 }}><Icon.bell/></button>
-          </div>
-
           {/* Progress */}
           {hasChildren && stats.total > 0 && t.showProgressBar !== false && (
             <ProgressBar stats={stats}/>
@@ -668,30 +767,47 @@ function NodeDetail({
             </p>
           )}
           {hasChildren && stats.total > 0 && t.showStats !== false && (
-            <div className="stats">
-                <div className="stat"><div className="num">{stats.total}</div><div className="lbl">Tổng việc</div></div>
-                <div className="stat"><div className="num" style={{color:'var(--good)'}}>{stats.done}</div><div className="lbl">Đạt</div></div>
-                <div className="stat"><div className="num" style={{color:'#5A4A1F'}}>{stats.doing}</div><div className="lbl">Đang làm</div></div>
-                <div className={`stat fail`}><div className="num">{stats.fail}</div><div className="lbl">Có lỗi</div></div>
+            <div className="stats stats--compact">
+                <div className="stat"><div className="num">{stats.total}</div><div className="lbl">{translate('statsTotalTasks')}</div></div>
+                <div className="stat"><div className="num" style={{color:'var(--good)'}}>{stats.done}</div><div className="lbl">{statusMeta.done.label}</div></div>
+                <div className="stat"><div className="num" style={{color:'#5A4A1F'}}>{stats.doing}</div><div className="lbl">{statusMeta.doing.label}</div></div>
+                <div className={`stat fail`}><div className="num">{stats.fail}</div><div className="lbl">{statusMeta.fail.label}</div></div>
               </div>
           )}
         </div>
 
-        {/* General note */}
-        {node.note && (
-          <NoteBlock text={node.note} onEdit={onEditNote}/>
-        )}
-        {!node.note && (
-          <div style={{ padding: '0 16px' }}>
-            <button type="button" className="note-add-btn" onClick={onEditNote}>
-              <Icon.note/> Thêm ghi chú chung cho {myLabel.toLowerCase()}…
-            </button>
+        </div>
+
+        {showEntriesSection && (
+          <div className="node-entries-section">
+            <div className="work-action-kind-bar work-action-kind-bar--three">
+              {WORK_ACTION_KINDS.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={`work-action-kind-btn work-action-kind-btn--${kind} ${entryModal === kind ? 'active' : ''}`}
+                  onClick={() => openEntryModal(kind)}
+                >
+                  {workKindLabels[kind]}
+                  {kind === 'discussion' && workActionsByKind.discussion?.length > 0 && (
+                    <span className="work-action-kind-count-inline">
+                      {workActionsByKind.discussion.length}
+                    </span>
+                  )}
+                  {kind !== 'discussion' && workActionsByKind[kind]?.length > 0 && (
+                    <span className="work-action-kind-count-inline">
+                      {workActionsByKind[kind].length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
         {subtaskPanel}
 
-        {isProject && projectFieldSettingsSupported && (
+        {showInlineProjectOps && isProject && projectFieldSettingsSupported && (
           <>
             <AttendancePanel
               project={node}
@@ -733,244 +849,53 @@ function NodeDetail({
           </>
         )}
 
-        {canShowDocLinks && (
-          <>
-            <div className="section">
-              <div className="section-head">
-                <div className="section-title">
-                  Link tài liệu {docLinks.length > 0 && `· ${docLinks.length}`}
-                </div>
-              </div>
-            </div>
-            {canAddDocLink && (
-              <div className="doc-links-toolbar">
-                <button
-                  type="button"
-                  className="btn btn-primary doc-links-add-btn"
-                  onClick={() => onOpenDocLink(null)}
-                >
-                  <Icon.plus/>
-                  Thêm
-                </button>
-              </div>
-            )}
-            {docLinks.length > 0 ? (
-              <div className="doc-links">
-                {docLinks.map((d) => (
-                  <div key={`${d.sourceNodeId || node.id}:${d.id}`} className="doc-link-row">
-                    <div className="doc-link-main">
-                      <div className="doc-link-title">{d.title}</div>
-                      {isProject && d.sourceName && d.sourceNodeId !== node.id && (
-                        <div className="doc-link-source">{d.sourceName}</div>
-                      )}
-                      <div className="doc-link-url">{d.url}</div>
-                      {d.note && <div className="doc-link-note">{d.note}</div>}
-                    </div>
-                    <div className="doc-link-actions">
-                      <button
-                        type="button"
-                        className="doc-link-btn doc-link-btn--view"
-                        onClick={() => openDocUrl(d.url)}
-                      >
-                        <Icon.eye/>
-                        Xem link
-                      </button>
-                      <button
-                        type="button"
-                        className="doc-link-btn"
-                        onClick={() => onOpenDocLink(d)}
-                      >
-                        Sửa
-                      </button>
-                      {typeof onDeleteDocLink === 'function' && (
-                        <button
-                          type="button"
-                          className="doc-link-btn doc-link-btn--danger"
-                          onClick={() => onDeleteDocLink(d)}
-                        >
-                          Xoá
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+        {entryModal && canLogWork && (
+          <WorkEntryModal
+            title={workKindLabels[entryModal]}
+            onClose={() => setEntryModal(null)}
+          >
+            {entryModal === 'discussion' ? (
+              <DiscussionChat
+                messages={workActionsByKind.discussion}
+                people={projectPeople}
+                currentUserId={currentUserId}
+                sending={discussionSending}
+                onSend={async (text, mentionIds) => {
+                  if (!onSendDiscussion) return;
+                  setDiscussionSending(true);
+                  try {
+                    await onSendDiscussion(text, mentionIds);
+                  } finally {
+                    setDiscussionSending(false);
+                  }
+                }}
+              />
             ) : (
-              <div className="doc-links-empty">
-                {canAddDocLink ? (
-                  <p className="field-note">Chưa có link tài liệu. Bấm <strong>Thêm</strong> để lưu link Drive/Doc/Spec.</p>
-                ) : (
-                  <p className="field-note" style={{ margin: 0 }}>
-                    Chưa có link. Thêm link tại từng hạng mục hoặc cập nhật cột{' '}
-                    <code>documents</code> trên bảng <code>projects</code> trong Supabase.
-                  </p>
-                )}
-              </div>
-            )}
-          </>
-        )}
-
-        {canLogWork && (
-          <>
-            <div className="section">
-              <div className="section-head">
-                <div className="section-title">
-                  Hành động tôi đã làm {workActions.length > 0 && `· ${workActions.length}`}
-                </div>
-                <button type="button" className="section-action" onClick={() => onOpenWorkAction(null)}>
-                  + Ghi nhận
-                </button>
-              </div>
-            </div>
-            {workActions.length > 0 ? (
-              <div className="work-actions-list">
-                {workActions.map((action) => {
-                  const mins = actionDurationMinutes(action);
-                  const inProgress = isWorkActionInProgress(action);
-                  const completed = action.status === 'completed';
-                  return (
-                    <div
-                      key={action.id}
-                      className={`work-action-card${inProgress ? ' work-action-card--active' : ''}${completed ? ' work-action-card--done' : ''}`}
-                    >
-                      <button
-                        type="button"
-                        className="work-action-main"
-                        onClick={() => onOpenWorkAction(action)}
-                      >
-                        <span className="work-action-icon" aria-hidden>
-                          {inProgress ? '◐' : <Icon.check/>}
-                        </span>
-                        <span className="work-action-body">
-                          <span className="work-action-title-row">
-                            <span className="work-action-title">{action.title}</span>
-                            {completed && (
-                              <span className="work-action-badge">Hoàn thành</span>
-                            )}
-                          </span>
-                          {action.note && (
-                            <span className="work-action-note">{action.note.replace(/\r\n/g, '\n')}</span>
-                          )}
-                          <span className="work-action-time">{formatWorkActionRange(action)}</span>
-                          {mins != null && (
-                            <span className="work-action-duration">{formatDurationMinutes(mins)}</span>
-                          )}
-                        </span>
-                        <Icon.chev className="work-action-chev"/>
-                      </button>
-                      {inProgress && typeof onCompleteWorkAction === 'function' && (
-                        <button
-                          type="button"
-                          className="work-action-complete-btn"
-                          onClick={() => onCompleteWorkAction(action)}
-                        >
-                          Hoàn thành
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ padding: '0 16px 12px' }}>
-                <button type="button" className="note-add-btn" onClick={() => onOpenWorkAction(null)}>
-                  <Icon.check style={{ opacity: 0.7 }}/> Ghi lại việc bạn vừa làm và thời gian bắt đầu / kết thúc…
-                </button>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Photos */}
-        <div className="section">
-          <div className="section-head">
-            <div className="section-title">
-              {canAddPhoto ? 'Ảnh đính kèm' : 'Tài liệu'} {displayPhotos.length > 0 && `· ${displayPhotos.length}`}
-            </div>
-            {canAddPhoto && (
-              <button className="section-action" onClick={() => onOpenPhoto(null)}>+ Thêm ảnh</button>
-            )}
-          </div>
-        </div>
-        <div
-          className={`photos ${canPastePhoto ? 'photos--paste' : ''}`}
-          tabIndex={canPastePhoto ? 0 : undefined}
-          role={canPastePhoto ? 'group' : undefined}
-          aria-label={canPastePhoto ? 'Ảnh đính kèm — Ctrl+V để dán' : undefined}
-        >
-          {displayPhotos.map(ph => (
-            <PhotoThumb
-              key={ph.id}
-              photo={ph}
-              onClick={() => onOpenPhoto(ph)}
-              onView={() => (onViewPhoto || onOpenPhoto)(ph)}
-            />
-          ))}
-          {canPastePhoto && (
-            <div className="photo add photo-paste-target" onClick={() => onOpenPhoto(null)}>
-              <div className="thumb">
-                <div style={{ textAlign:'center', fontSize:11 }}>
-                  <Icon.cam style={{ display:'block', margin:'0 auto 4px' }}/>
-                  Dán ảnh (Ctrl+V)
-                </div>
-              </div>
-              <div className="cap" style={{ color:'var(--muted)' }}>hoặc bấm để chọn file</div>
-            </div>
-          )}
-          {!canPastePhoto && canAddPhoto && (
-            <div className="photo add" onClick={() => onOpenPhoto(null)}>
-              <div className="thumb">
-                <div style={{ textAlign:'center', fontSize:11 }}>
-                  <Icon.cam style={{ display:'block', margin:'0 auto 4px' }}/>
-                  Tải ảnh
-                </div>
-              </div>
-              <div className="cap" style={{ color:'var(--muted)' }}>Chụp hoặc chọn từ thư viện</div>
-            </div>
-          )}
-        </div>
-        {!canAddPhoto && displayPhotos.length === 0 && (
-          <div style={{ padding: '0 16px 10px', color: 'var(--muted)', fontSize: 12 }}>
-            Chưa có tài liệu ảnh ở các mục con.
-          </div>
-        )}
-        {!canAddPhoto && displayPhotos.length > 0 && (
-          <div className="doc-list">
-            {displayPhotos.map((ph, idx) => (
-              <div key={`doc-${ph.id}`} className="doc-row">
-                <button
-                  type="button"
-                  className="doc-row-main"
-                  onClick={() => onOpenPhoto(ph)}
-                >
-                  <span className="doc-row-index">{idx + 1}.</span>
-                  <span className="doc-row-text">
-                    <strong>{ph.sourceName}</strong> · {ph.label}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="doc-row-view"
-                  aria-label="Xem ảnh full"
-                  onClick={() => (onViewPhoto || onOpenPhoto)(ph)}
-                >
-                  <Icon.eye />
-                </button>
-                {typeof onDeletePhoto === 'function' && (
+              <>
+                <div className="work-tab-add-row work-tab-add-row--modal">
                   <button
                     type="button"
-                    className="doc-row-delete"
-                    onClick={() => onDeletePhoto(ph)}
+                    className="work-tab-add-btn"
+                    onClick={() => onOpenWorkAction(null, entryModal)}
                   >
-                    Xóa
+                    <Icon.plus/>
+                    {translate('workAddKind', { kind: workKindLabels[entryModal] })}
                   </button>
+                </div>
+                {workActionsByKind[entryModal]?.length > 0 ? (
+                  <div className="work-actions-list work-actions-list--modal">
+                    {workActionsByKind[entryModal].map(renderWorkActionCard)}
+                  </div>
+                ) : (
+                  <p className="field-note entry-panel-empty">{translate('workEmptyHint')}</p>
                 )}
-              </div>
-            ))}
-          </div>
+              </>
+            )}
+          </WorkEntryModal>
         )}
 
         {/* Children — ẩn khi desktop split có danh sách ở cột trái */}
+
         {(!hideChildrenList) && (hasChildren || canAddChild) && (
           <div style={{ marginTop: 14 }}>
             <div className="section">
@@ -978,7 +903,7 @@ function NodeDetail({
                 <div className="section-title">
                   {childrenLabel}{hasChildren ? ` · ${childNodes.length}` : ''}
                 </div>
-                {canAddChild && (
+                {canAddChild && hasChildren && (
                   <button type="button" className="section-action" onClick={onAddChild}>
                     + Thêm {addChildLabel}
                   </button>
@@ -989,18 +914,18 @@ function NodeDetail({
             {hasChildren && (
               <>
                 <div className="filter-row">
-                  <FilterPill active={filter==='all'}     onClick={() => setFilter('all')}>Tất cả <span className="count-mini">{counts.all}</span></FilterPill>
+                  <FilterPill active={filter==='all'}     onClick={() => setFilter('all')}>{translate('all')} <span className="count-mini">{counts.all}</span></FilterPill>
                   {counts.fail > 0 && (
-                    <FilterPill active={filter==='fail'} onClick={() => setFilter('fail')} tone="fail">Có lỗi <span className="count-mini">{counts.fail}</span></FilterPill>
+                    <FilterPill active={filter==='fail'} onClick={() => setFilter('fail')} tone="fail">{statusMeta.fail.label} <span className="count-mini">{counts.fail}</span></FilterPill>
                   )}
-                  <FilterPill active={filter==='doing'}   onClick={() => setFilter('doing')}>Đang làm <span className="count-mini">{counts.doing}</span></FilterPill>
-                  <FilterPill active={filter==='todo'}    onClick={() => setFilter('todo')}>Chờ <span className="count-mini">{counts.todo}</span></FilterPill>
-                  <FilterPill active={filter==='done'}    onClick={() => setFilter('done')}>Đạt <span className="count-mini">{counts.done}</span></FilterPill>
+                  <FilterPill active={filter==='doing'}   onClick={() => setFilter('doing')}>{statusMeta.doing.label} <span className="count-mini">{counts.doing}</span></FilterPill>
+                  <FilterPill active={filter==='todo'}    onClick={() => setFilter('todo')}>{statusMeta.todo.label} <span className="count-mini">{counts.todo}</span></FilterPill>
+                  <FilterPill active={filter==='done'}    onClick={() => setFilter('done')}>{statusMeta.done.label} <span className="count-mini">{counts.done}</span></FilterPill>
                 </div>
 
                 <div className="list">
                   {filtered.length === 0 && (
-                    <div className="empty">Không có {childrenLabel.toLowerCase()} nào ở mục này.</div>
+                    <div className="empty">{translate('emptyChildrenInFilter', { label: childrenLabel.toLowerCase() })}</div>
                   )}
                   {filtered.map(child => (
                     <ItemCard
@@ -1009,7 +934,7 @@ function NodeDetail({
                       depth={depth + 1}
                       active={showSiblingList && child.id === node.id}
                       onOpen={() => onOpenChild(child)}
-                      onOpenActions={onChildActions ? (e) => { e.stopPropagation(); onChildActions(child); } : undefined}
+                      onOpenActions={onChildActions}
                       onComplete={onCompleteNode}
                     />
                   ))}
@@ -1040,7 +965,7 @@ function NodeDetail({
         {!hasChildren && !canAddChild && (
           <div className="section">
             <div className="section-head">
-              <div className="section-title">Chi tiết</div>
+              <div className="section-title">{translate('sectionDetails')}</div>
             </div>
             <div className="list">
               <button onClick={onCycleStatus} style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'#fff', border:'1px solid var(--line)', borderRadius:14, cursor:'pointer', fontFamily:'var(--font-body)', fontSize:13, color:'var(--ink)', textAlign:'left' }}>
@@ -1061,7 +986,7 @@ function NodeDetail({
       </div>
 
       {/* FAB */}
-      {canAddChild && !embedded && (
+      {canAddChild && !embedded && hasChildren && (
         <button type="button" className="fab" aria-label="Thêm" onClick={onAddChild}>
           <Icon.plus/> Thêm {addChildLabel}
         </button>
@@ -1072,6 +997,7 @@ function NodeDetail({
 
 // ─── People Home ──────────────────────────────────────────────────
 function PeopleHome({ products, onOpenPerson }) {
+  const { t, statusMeta } = useI18n();
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('all');
   const [scrolled, setScrolled] = useState(false);
@@ -1091,9 +1017,9 @@ function PeopleHome({ products, onOpenPerson }) {
   }, [products]);
 
   const statusTabs = useMemo(() => [
-    { key: 'all', label: 'Tất cả' },
-    ...Object.entries(STATUS_META).map(([key, meta]) => ({ key, label: meta.label })),
-  ], []);
+    { key: 'all', label: t('all') },
+    ...Object.entries(statusMeta).map(([key, meta]) => ({ key, label: meta.label })),
+  ], [t, statusMeta]);
 
   const tableRows = useMemo(() => {
     return enriched.filter(({ stats }) => {
@@ -1125,32 +1051,32 @@ function PeopleHome({ products, onOpenPerson }) {
   return (
     <div className="screen has-nav">
       <div className={`topbar ${scrolled ? 'scrolled' : ''}`}>
-        <button className="icon-btn" aria-label="Menu" style={{ pointerEvents:'none' }}>
+        <button className="icon-btn" aria-label={t('menu')} style={{ pointerEvents:'none' }}>
           <svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
         </button>
         <div className="title-wrap">
-          <div className="crumb">Check Lỗi Việc</div>
-          <div className="title">Nhân sự</div>
+          <div className="crumb">{APP_NAME}</div>
+          <div className="title">{t('peopleTitle')}</div>
         </div>
-        <button className="icon-btn" aria-label="Lọc"><Icon.filter/></button>
-        <button className="icon-btn" aria-label="Thêm"><Icon.plus/></button>
+        <button className="icon-btn" aria-label={t('filter')}><Icon.filter/></button>
+        <button className="icon-btn" aria-label={t('add')}><Icon.plus/></button>
       </div>
 
       <div className="scroll" ref={scrollRef}>
         <div className="home-hero">
-          <div className="h-eyebrow">Đội ngũ</div>
-          <h1>{PEOPLE.length} thành viên</h1>
+          <div className="h-eyebrow">{t('peopleTeam')}</div>
+          <h1>{t('peopleMembers', { count: PEOPLE.length })}</h1>
           <div className="home-stats">
-            <div className="s"><div className="n">{teamStats.online}</div><div className="l">Đang online</div></div>
-            <div className="s"><div className="n">{teamStats.totalWork}</div><div className="l">Tổng việc</div></div>
-            <div className={`s ${teamStats.overdue > 0 ? 'alert' : ''}`}><div className="n">{teamStats.overdue}</div><div className="l">Việc trễ hạn</div></div>
+            <div className="s"><div className="n">{teamStats.online}</div><div className="l">{t('peopleOnline')}</div></div>
+            <div className="s"><div className="n">{teamStats.totalWork}</div><div className="l">{t('peopleTotalWork')}</div></div>
+            <div className={`s ${teamStats.overdue > 0 ? 'alert' : ''}`}><div className="n">{teamStats.overdue}</div><div className="l">{t('peopleOverdue')}</div></div>
           </div>
         </div>
 
         <div className="home-search" style={{ marginTop: 6 }}>
           <Icon.search style={{ color: 'var(--muted-2)' }}/>
           <input
-            placeholder="Tìm theo tên, vai trò…"
+            placeholder={t('peopleSearch')}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -1259,7 +1185,8 @@ function PeopleHome({ products, onOpenPerson }) {
 }
 
 // ─── Person Detail ────────────────────────────────────────────────
-function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, onEditPerson, variant = 'person' }) {
+function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, onEditPerson, onOpenSettings, variant = 'person' }) {
+  const { t, statusMeta } = useI18n();
   const isMe = variant === 'me';
   const person = PEOPLE.find(p => p.id === personId);
   const [scrolled, setScrolled] = useState(false);
@@ -1306,14 +1233,14 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
   const statusFilterOptions = useMemo(() => {
     const order = ['todo', 'doing', 'fail', 'done'];
     return [
-      { key: 'all', label: 'Tất cả', count: items.length },
+      { key: 'all', label: t('all'), count: items.length },
       ...order.map((key) => ({
         key,
-        label: STATUS_META[key].label,
+        label: statusMeta[key].label,
         count: items.filter((it) => it.node.status === key).length,
       })),
     ];
-  }, [items]);
+  }, [items, t, statusMeta]);
 
   const toggleSubtaskSelection = useCallback((nodeId) => {
     setSelectedSubtaskIds((prev) => {
@@ -1338,7 +1265,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
       return order
         .filter((statusKey) => statusFilter === 'all' || statusFilter === statusKey)
         .map((statusKey) => ({
-          title: STATUS_META[statusKey].label,
+          title: statusMeta[statusKey].label,
           status: statusKey,
           items: items.filter((it) => it.node.status === statusKey),
         }));
@@ -1360,27 +1287,35 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
     // by status
     const order = ['fail', 'doing', 'todo', 'done'];
     const groups = order.map(s => ({
-      title: STATUS_META[s].label,
+      title: statusMeta[s].label,
       status: s,
       items: items.filter(it => it.node.status === s),
     })).filter(g => g.items.length > 0);
     return groups;
-  }, [items, groupBy, isMe, statusFilter]);
+  }, [items, groupBy, isMe, statusFilter, statusMeta]);
 
   if (!person) return null;
 
   return (
     <div className="screen has-nav">
       <div className={`topbar ${scrolled ? 'scrolled' : ''}`}>
-        <button className="icon-btn" onClick={onBack} aria-label="Quay lại"><Icon.back/></button>
+        <button className="icon-btn" onClick={onBack} aria-label={t('back')}><Icon.back/></button>
         <div className="title-wrap">
-          <div className="crumb">{isMe ? 'Tôi' : 'Nhân sự'}</div>
-          <div className="title">{scrolled ? person.name : (isMe ? 'Việc của tôi' : 'Chi tiết nhân sự')}</div>
+          <div className="crumb">{isMe ? t('meCrumb') : t('peopleTitle')}</div>
+          <div className="title">{scrolled ? person.name : (isMe ? t('meTitle') : t('personDetail'))}</div>
         </div>
-        <button className="icon-btn" aria-label="Gọi">
+        {isMe && onOpenSettings && (
+          <button type="button" className="icon-btn" aria-label={t('openSettings')} onClick={onOpenSettings}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </button>
+        )}
+        <button className="icon-btn" aria-label={t('call')}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 4h4l2 5-3 2a11 11 0 005 5l2-3 5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
         </button>
-        <button className="icon-btn" aria-label="Sửa nhân sự" onClick={() => onEditPerson?.(person)}>
+        <button className="icon-btn" aria-label={t('editPerson')} onClick={() => onEditPerson?.(person)}>
           <Icon.edit/>
         </button>
       </div>
@@ -1397,16 +1332,16 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
             {person.role}
             <span style={{ width:3, height:3, borderRadius:'50%', background:'var(--muted-2)' }}/>
             <span style={{ color: person.status === 'online' ? 'var(--good)' : person.status === 'busy' ? '#5A4A1F' : 'var(--muted)', fontWeight: 600 }}>
-              {person.status === 'online' ? 'Online' : person.status === 'busy' ? 'Bận' : 'Offline'}
+              {person.status === 'online' ? t('online') : person.status === 'busy' ? t('busy') : t('offline')}
             </span>
           </div>
           <div className="p-summary">
-            <div className="s"><div className="n">{stats.total}</div><div className="l">Việc</div></div>
-            <div className="s good"><div className="n">{stats.done}</div><div className="l">Đạt</div></div>
-            <div className="s"><div className="n" style={{color:'#5A4A1F'}}>{stats.doing}</div><div className="l">Đang</div></div>
+            <div className="s"><div className="n">{stats.total}</div><div className="l">{t('work')}</div></div>
+            <div className="s good"><div className="n">{stats.done}</div><div className="l">{t('statusDone')}</div></div>
+            <div className="s"><div className="n" style={{color:'#5A4A1F'}}>{stats.doing}</div><div className="l">{t('working')}</div></div>
             <div className={`s ${stats.fail + stats.overdue > 0 ? 'fail' : ''}`}>
               <div className="n">{stats.fail + stats.overdue}</div>
-              <div className="l">Lỗi/Trễ</div>
+              <div className="l">{t('errorsLate')}</div>
             </div>
           </div>
         </div>
@@ -1415,7 +1350,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
         <div style={{ display:'flex', gap:8, padding:'0 16px 14px' }}>
           <button style={{ flex:1, height:40, borderRadius:10, background:'var(--ink)', color:'#fff', border:0, fontWeight:600, fontSize:13, cursor:'pointer', fontFamily:'var(--font-body)', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6l9 6 9-6M3 6v12h18V6M3 6h18" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
-            Nhắn tin
+            {t('message')}
           </button>
           <button style={{ width:40, height:40, borderRadius:10, background:'#fff', border:'1px solid var(--line)', cursor:'pointer', display:'grid', placeItems:'center' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 4h4l2 5-3 2a11 11 0 005 5l2-3 5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
@@ -1428,7 +1363,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
         {/* Toggle group */}
         <div style={{ padding:'4px 16px 8px' }}>
           <div className="section-title" style={{padding:0, marginBottom: 8}}>
-            {isMe ? 'Sub-task được phân công' : 'Việc đang phụ trách'} · {items.length}
+            {isMe ? t('myAssignedSubtasks') : t('assignedWork')} · {items.length}
           </div>
           {isMe && items.length > 0 && (
             <div className="my-work-controls">
@@ -1476,7 +1411,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                 cursor:'pointer', whiteSpace:'nowrap',
                 boxShadow: groupBy==='product' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
               }}
-            >Theo sản phẩm</button>
+            >Theo dự án</button>
             <button
               onClick={() => setGroupBy('status')}
               style={{
@@ -1620,6 +1555,7 @@ function SubtasksDashboard({ products, onOpenNode }) {
   const [assigneeId, setAssigneeId] = useState('all');
   const [projectId, setProjectId] = useState('all');
   const [status, setStatus] = useState('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const allItems = useMemo(() => collectAllSubtaskItems(products), [products]);
   const projectOptions = useMemo(() => (
@@ -1665,10 +1601,25 @@ function SubtasksDashboard({ products, onOpenNode }) {
     <div className="screen subtasks-screen">
       <div className="subtasks-topbar">
         <div>
-          <div className="crumb">Team work</div>
+          <div className="subtasks-brand">
+            <img src={APP_LOGO} alt="" className="subtasks-brand-logo" />
+            <span>Team work</span>
+          </div>
           <h1>Bảng tổng hợp công việc toàn team</h1>
         </div>
-        <button type="button" className="btn btn-secondary" onClick={resetFilters}>Xóa lọc</button>
+        <div className="subtasks-topbar-actions">
+          <button
+            type="button"
+            className="btn btn-secondary subtasks-filter-toggle"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+          >
+            Lọc
+          </button>
+          <button type="button" className="btn btn-secondary subtasks-reset-btn" onClick={resetFilters} aria-label="Xóa lọc">
+            <Icon.close/>
+          </button>
+        </div>
       </div>
 
       <div className="scroll subtasks-scroll">
@@ -1681,39 +1632,41 @@ function SubtasksDashboard({ products, onOpenNode }) {
           <div className="subtasks-summary-card"><div className="num">{totals.byStatus.fail}</div><div className="lbl">Đang vướng</div></div>
         </div>
 
-        <div className="subtasks-filters">
-          <div className="field">
-            <label className="field-label" htmlFor="subtask-date-from">Hoàn thành từ ngày</label>
-            <input id="subtask-date-from" className="field-input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        {filtersOpen && (
+          <div className="subtasks-filters">
+            <div className="field">
+              <label className="field-label" htmlFor="subtask-date-from">Hoàn thành từ ngày</label>
+              <input id="subtask-date-from" className="field-input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="subtask-date-to">Đến ngày</label>
+              <input id="subtask-date-to" className="field-input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="subtask-assignee">Nhân sự</label>
+              <select id="subtask-assignee" className="field-input" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+                <option value="all">Tất cả nhân sự</option>
+                {PEOPLE.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="subtask-project">Dự án</label>
+              <select id="subtask-project" className="field-input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="all">Tất cả dự án</option>
+                {projectOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{[p.customerName, p.name].filter(Boolean).join(' · ')}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="subtask-status">Trạng thái</label>
+              <select id="subtask-status" className="field-input" value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="all">Tất cả trạng thái</option>
+                {Object.entries(STATUS_META).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
+              </select>
+            </div>
           </div>
-          <div className="field">
-            <label className="field-label" htmlFor="subtask-date-to">Đến ngày</label>
-            <input id="subtask-date-to" className="field-input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="subtask-assignee">Nhân sự</label>
-            <select id="subtask-assignee" className="field-input" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-              <option value="all">Tất cả nhân sự</option>
-              {PEOPLE.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="subtask-project">Dự án</label>
-            <select id="subtask-project" className="field-input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="all">Tất cả dự án</option>
-              {projectOptions.map((p) => (
-                <option key={p.id} value={p.id}>{[p.customerName, p.name].filter(Boolean).join(' · ')}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="subtask-status">Trạng thái</label>
-            <select id="subtask-status" className="field-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="all">Tất cả trạng thái</option>
-              {Object.entries(STATUS_META).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
-            </select>
-          </div>
-        </div>
+        )}
 
         <div className="subtasks-table-wrap">
           {filtered.length === 0 ? (
@@ -1741,23 +1694,23 @@ function SubtasksDashboard({ products, onOpenNode }) {
                   const taskProgress = taskProgressLabel(it, allItems);
                   const priority = priorityForWorkItem(it.node);
                   return (
-                    <tr key={it.node.id} onClick={() => onOpenNode(it.node.id)}>
-                      <td data-label="Dự án"><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
-                      <td data-label="Hạng mục"><div className="subtasks-table-title">{it.featureName || 'Chưa có hạng mục'}</div></td>
-                      <td data-label="Công việc"><div className="subtasks-table-title">{it.parentTaskName || 'Chưa có công việc'}</div></td>
-                      <td data-label="Sub task"><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">Hoàn thành: {formatCompletedAt(it.node.completedAt)}</div>}</td>
-                      <td data-label="Người phụ trách">{assignees || 'Chưa gán'}</td>
-                      <td data-label="Ưu tiên"><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
-                      <td data-label="Deadline"><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
-                      <td data-label="Tiến độ">
+                    <tr key={it.node.id} className="subtasks-card-row" onClick={() => onOpenNode(it.node.id)}>
+                      <td className="subtasks-card-project" data-label="Dự án"><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
+                      <td className="subtasks-card-feature" data-label="Hạng mục"><div className="subtasks-table-title">{it.featureName || 'Chưa có hạng mục'}</div></td>
+                      <td className="subtasks-card-task" data-label="Công việc"><div className="subtasks-table-title">{it.parentTaskName || 'Chưa có công việc'}</div></td>
+                      <td className="subtasks-card-subtask" data-label="Sub task"><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">Hoàn thành: {formatCompletedAt(it.node.completedAt)}</div>}</td>
+                      <td className="subtasks-card-assignee" data-label="Người phụ trách">{assignees || 'Chưa gán'}</td>
+                      <td className="subtasks-card-priority" data-label="Ưu tiên"><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
+                      <td className="subtasks-card-deadline" data-label="Deadline"><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
+                      <td className="subtasks-card-progress" data-label="Tiến độ">
                         <div className="task-progress-cell">
                           <div className="task-progress-text">{taskProgress.pct}%</div>
                           <div className="task-progress-track"><span style={{ width: `${taskProgress.pct}%` }} /></div>
                           <div className="subtasks-table-sub">{taskProgress.done}/{taskProgress.total} sub task xong</div>
                         </div>
                       </td>
-                      <td data-label="Thời gian">{formatDurationMinutes(mins) || '0 phút'}</td>
-                      <td data-label="Trạng thái"><StatusChip status={it.node.status}/></td>
+                      <td className="subtasks-card-time" data-label="Thời gian">{formatDurationMinutes(mins) || '0 phút'}</td>
+                      <td className="subtasks-card-status" data-label="Trạng thái"><StatusChip status={it.node.status}/></td>
                     </tr>
                   );
                 })}
@@ -1771,23 +1724,24 @@ function SubtasksDashboard({ products, onOpenNode }) {
 }
 
 function BottomNav({ tab, onChange, alertCount }) {
+  const { t } = useI18n();
   const items = [
-    { id: 'products', label: 'Sản phẩm', icon: (
+    { id: 'products', label: t('navProducts'), icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/></svg>
     ) },
-    { id: 'subtasks', label: 'Sub-task', icon: (
+    { id: 'subtasks', label: t('navSubtasks'), icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M7 6h14M7 12h14M7 18h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
     ) },
-    { id: 'schedule', label: 'Lịch', icon: (
+    { id: 'schedule', label: t('navScheduleShort'), icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ) },
-    { id: 'attendance', label: 'Chấm công', icon: (
+    { id: 'attendance', label: t('navAttendance'), icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="3.5" width="16" height="17" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M8 2.5v4M16 2.5v4M4 8.5h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M8 13l2.3 2.3L16 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
     ) },
-    { id: 'people', label: 'Nhân sự', icon: (
+    { id: 'people', label: t('navPeople'), icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><circle cx="17" cy="9.5" r="2.5" stroke="currentColor" strokeWidth="1.8"/><path d="M3 19a6 6 0 0112 0M14 18a5 5 0 017 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ) },
-    { id: 'me', label: 'Tôi', icon: (
+    { id: 'me', label: t('navMe'), icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><path d="M4.5 20a7.5 7.5 0 0115 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ), badge: alertCount },
   ];
@@ -1819,80 +1773,69 @@ function FilterPill({ children, active, onClick, tone }) {
 }
 
 // ─── Product Card (richer top-level card) ─────────────────────────
-function ProductCard({ product, onOpen, onOpenActions, onComplete, selectable = false, selected = false, onToggleSelected }) {
+function ProductCard({ product, onOpen, onOpenActions, onComplete, selected = false }) {
+  const { t } = useI18n();
   const stats = aggregate(product);
   const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
   const tone = deadlineTone(product.deadline, product.status);
   const modules = (product.children || []).length;
   return (
     <div className={`product-card ${product.status === 'fail' ? 'fail' : ''} ${product.status === 'done' ? 'done' : ''} ${selected ? 'selected' : ''}`} onClick={onOpen}>
-      {selectable && (
-        <button
-          type="button"
-          className={`product-select-box ${selected ? 'checked' : ''}`}
-          aria-pressed={selected}
-          aria-label={`${selected ? 'Bỏ chọn' : 'Chọn'} ${product.name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleSelected?.(product.id);
-          }}
-        >
-          {selected && <Icon.check/>}
-        </button>
-      )}
-      {onOpenActions && (
-        <button
-          type="button"
-          className="product-card-more icon-btn"
-          aria-label="Tùy chọn"
-          onClick={(e) => { e.stopPropagation(); onOpenActions(product); }}
-        >
-          <Icon.more/>
-        </button>
-      )}
-      <div className="product-card-assignees" onClick={(e) => e.stopPropagation()}>
-        <Avatars ids={product.assignees} size="sm" max={4} alwaysShow/>
-      </div>
       <div className="pc-row1">
         <div className="pc-head">
-          {product.customerName && (
-            <div className="pc-customer">{product.customerName}</div>
-          )}
-          <div className="pc-title">{product.name}</div>
+          <div className="pc-title-line">
+            {product.customerName && (
+              <span className="pc-customer">{product.customerName}</span>
+            )}
+            <span className="pc-title">{product.name}</span>
+          </div>
         </div>
+        <div className="product-card-assignees" onClick={(e) => e.stopPropagation()}>
+          <Avatars ids={product.assignees} size="sm" max={3} alwaysShow/>
+        </div>
+        {onOpenActions && (
+          <button
+            type="button"
+            className="product-card-more icon-btn"
+            aria-label={t('options')}
+            onClick={(e) => { e.stopPropagation(); onOpenActions(product); }}
+          >
+            <Icon.more/>
+          </button>
+        )}
       </div>
       <div className="pc-meta">
         <StatusChip status={product.status}/>
+        <span className={`chip deadline ${tone !== 'neutral' ? tone : ''}`}>
+          <Icon.cal/>{formatDeadline(product.deadline)}
+        </span>
         {product.issues > 0 && (
           <span className="pc-issue-pill">
             <Icon.warn/> {product.issues}
           </span>
         )}
-        <span className={`chip deadline ${tone !== 'neutral' ? tone : ''}`}>
-          <Icon.cal/>{formatDeadline(product.deadline)}
-        </span>
-      </div>
-      <div className="pc-progress-row">
-        <ProgressBar stats={stats}/>
-        <div className="pct">{pct}%</div>
       </div>
       <div className="pc-foot">
         <div className="pc-counts">
-          <span><b>{modules}</b> hạng mục</span>
+          <span><b>{modules}</b> {t('labelModules')}</span>
           <span className="dot-sep"/>
-          <span><b>{stats.done}</b>/{stats.total} việc</span>
+          <span><b>{stats.done}</b>/{stats.total} {t('labelTasks')}</span>
           {stats.fail > 0 && (
             <>
               <span className="dot-sep"/>
-              <span style={{color:'var(--accent-ink)', fontWeight:600}}>{stats.fail} lỗi</span>
+              <span style={{color:'var(--accent-ink)', fontWeight:600}}>{stats.fail} {t('labelErrors')}</span>
             </>
           )}
           {product.completedAt && (
             <>
               <span className="dot-sep"/>
-              <span className="item-completed-at">HT {formatCompletedAt(product.completedAt)}</span>
+              <span className="item-completed-at">{t('completedAtShort')} {formatCompletedAt(product.completedAt)}</span>
             </>
           )}
+        </div>
+        <div className="pc-progress-row">
+          <ProgressBar stats={stats}/>
+          <div className="pct">{pct}%</div>
         </div>
         {typeof onComplete === 'function' && !product.completedAt && (
           <button
@@ -1904,7 +1847,7 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, selectable = 
             }}
           >
             <Icon.check/>
-            Hoàn thành
+            {t('workComplete')}
           </button>
         )}
       </div>
@@ -1924,6 +1867,7 @@ function ProductsHome({
   products, onOpen, onOpenActions, onComplete, onAddProduct, onDeleteSelected,
   panel = false, currentUserId = null, canBulkDelete = false,
 }) {
+  const { t, locale } = useI18n();
   const [tab, setTab] = useState('active'); // active | done | all
   const [search, setSearch] = useState('');
   const [selectedProductIds, setSelectedProductIds] = useState(() => new Set());
@@ -1938,14 +1882,7 @@ function ProductsHome({
     () => PEOPLE.find((p) => p.id === currentUserId) || PEOPLE[0] || null,
     [currentUserId],
   );
-  const todayText = useMemo(() => {
-    const now = new Date();
-    const weekday = now.toLocaleDateString('vi-VN', { weekday: 'long' });
-    const prettyWeekday = weekday.slice(0, 1).toUpperCase() + weekday.slice(1);
-    const dd = String(now.getDate()).padStart(2, '0');
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    return `${prettyWeekday} · ${dd} / ${mm}`;
-  }, []);
+  const todayText = useMemo(() => formatTodayHeadline(locale), [locale]);
 
   useEffect(() => {
     const el = scrollRef.current; if (!el) return;
@@ -2024,7 +1961,7 @@ function ProductsHome({
     const selectedNames = products
       .filter((p) => selectedProductIds.has(p.id))
       .map((p) => p.name);
-    const ok = window.confirm(`Xóa ${selectedNames.length} sản phẩm đã chọn? Toàn bộ hạng mục, công việc và sub-task bên trong cũng sẽ bị xóa.`);
+    const ok = window.confirm(t('deleteProjectsConfirm', { count: selectedNames.length }));
     if (!ok) return;
     setBulkDeleting(true);
     try {
@@ -2033,33 +1970,22 @@ function ProductsHome({
     } finally {
       setBulkDeleting(false);
     }
-  }, [clearProductSelection, onDeleteSelected, products, selectedProductIds]);
+  }, [clearProductSelection, onDeleteSelected, products, selectedProductIds, t]);
 
   return (
     <div className={`screen ${panel ? 'screen--panel' : 'has-nav'}`}>
       <div className={`topbar ${scrolled ? 'scrolled' : ''} ${panel ? 'topbar--panel' : ''}`}>
-        {!panel && (
-          <button className="icon-btn" aria-label="Menu" style={{ pointerEvents:'none' }}>
-            <svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-          </button>
-        )}
         <div className="title-wrap">
-          <div className="crumb">{panel ? 'Danh sách' : 'Check Lỗi Việc'}</div>
-          <div className="title">Tất cả sản phẩm</div>
+          {panel ? (
+            <div className="crumb">{t('list')}</div>
+          ) : (
+            <div className="topbar-brand">
+              <img src={APP_LOGO} alt="" className="topbar-brand-logo" />
+              <span>{APP_NAME}</span>
+            </div>
+          )}
+          <div className="title">{t('productsTitle')}</div>
         </div>
-        <button className="icon-btn" aria-label="Tìm"><Icon.search/></button>
-        {!panel && canBulkDelete && (
-          <button
-            className={`icon-btn product-bulk-toggle ${showBulkToolbar ? 'active' : ''}`}
-            aria-label={showBulkToolbar ? 'Đóng chọn nhiều' : 'Chọn nhiều'}
-            onClick={() => {
-              if (showBulkToolbar) clearProductSelection();
-              else setBulkMode(true);
-            }}
-          >
-            {showBulkToolbar ? <Icon.close/> : <Icon.trash/>}
-          </button>
-        )}
         {!panel && (
           <div
             style={{
@@ -2084,11 +2010,11 @@ function ProductsHome({
         {!panel && (
         <div className="home-hero">
           <div className="h-eyebrow">{todayText}</div>
-          <h1>Chào, {currentUser?.name || 'cả nhà'} 👋</h1>
+          <h1>{t('productsGreeting', { name: currentUser?.name || t('productsGreetingDefault') })}</h1>
           <div className="home-stats">
-            <div className="s"><div className="n">{counts.active}</div><div className="l">Đang chạy</div></div>
-            <div className={`s ${counts.totalIssues > 0 ? 'alert' : ''}`}><div className="n">{counts.totalIssues}</div><div className="l">Lỗi mở</div></div>
-            <div className="s"><div className="n">{counts.totalDone}<span style={{fontSize:13, color:'var(--muted)', fontWeight:500}}>/{counts.totalTotal}</span></div><div className="l">Việc đạt</div></div>
+            <div className="s"><div className="n">{counts.active}</div><div className="l">{t('productsRunning')}</div></div>
+            <div className={`s ${counts.totalIssues > 0 ? 'alert' : ''}`}><div className="n">{counts.totalIssues}</div><div className="l">{t('productsOpenIssues')}</div></div>
+            <div className="s"><div className="n">{counts.totalDone}<span style={{fontSize:13, color:'var(--muted)', fontWeight:500}}>/{counts.totalTotal}</span></div><div className="l">{t('productsAchieved')}</div></div>
           </div>
           <div style={{ display:'flex', gap:10, flexWrap:'wrap', justifyContent:'center', marginTop: 10 }}>
             <button
@@ -2105,7 +2031,7 @@ function ProductsHome({
                 cursor: 'pointer',
               }}
             >
-              Xem Nhân sự
+              {t('productsViewPeople')}
             </button>
           </div>
         </div>
@@ -2115,26 +2041,26 @@ function ProductsHome({
           <Icon.search style={{ color: 'var(--muted-2)' }}/>
           <input
             type="search"
-            placeholder="Tìm theo tên khách hàng hoặc dự án…"
+            placeholder={t('productsSearchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            aria-label="Tìm sản phẩm"
+            aria-label={t('productsSearchAria')}
           />
           {!panel && <span className="kbd">⌘ K</span>}
         </div>
 
         <div className="home-tabs">
           <button className={`home-tab ${tab==='active' ? 'active' : ''}`} onClick={() => setTab('active')}>
-            Đang chạy <span className="pill">{counts.active}</span>
+            {t('productsRunning')} <span className="pill">{counts.active}</span>
           </button>
           <button className={`home-tab alert ${tab==='alert' ? 'active' : ''}`} onClick={() => setTab('alert')}>
-            Có lỗi {counts.alert > 0 && <span className="pill">{counts.alert}</span>}
+            {t('statusFail')} {counts.alert > 0 && <span className="pill">{counts.alert}</span>}
           </button>
           <button className={`home-tab ${tab==='done' ? 'active' : ''}`} onClick={() => setTab('done')}>
-            Đã xong <span className="pill">{counts.done}</span>
+            {t('productsTabCompleted')} <span className="pill">{counts.done}</span>
           </button>
           <button className={`home-tab ${tab==='all' ? 'active' : ''}`} onClick={() => setTab('all')}>
-            Tất cả <span className="pill">{counts.all}</span>
+            {t('all')} <span className="pill">{counts.all}</span>
           </button>
         </div>
 
@@ -2148,12 +2074,12 @@ function ProductsHome({
               onClick={toggleAllVisibleProducts}
             >
               <span className="product-bulk-check-box">{allVisibleSelected && <Icon.check/>}</span>
-              {allVisibleSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả đang hiển thị'}
+              {allVisibleSelected ? t('productsDeselectAllVisible') : t('productsSelectAllVisible')}
             </button>
-            <span className="product-bulk-count">{selectedVisibleCount} đã chọn</span>
+            <span className="product-bulk-count">{t('productsSelectedCount', { count: selectedVisibleCount })}</span>
             {selectedVisibleCount > 0 && (
               <button type="button" className="product-bulk-clear" onClick={clearProductSelection}>
-                Bỏ chọn
+                {t('deselectAll')}
               </button>
             )}
             <button
@@ -2163,7 +2089,7 @@ function ProductsHome({
               onClick={deleteSelectedProducts}
             >
               <Icon.trash/>
-              {bulkDeleting ? 'Đang xóa…' : 'Xóa đã chọn'}
+              {bulkDeleting ? t('productsDeleting') : t('productsDeleteSelected')}
             </button>
           </div>
         )}
@@ -2172,28 +2098,29 @@ function ProductsHome({
           {filtered.length === 0 && (
             <div className="empty">
               {search.trim()
-                ? 'Không tìm thấy sản phẩm theo tên khách hàng hoặc dự án.'
-                : 'Không có sản phẩm nào ở mục này.'}
+                ? t('productsEmptySearch')
+                : t('productsEmptyTab')}
             </div>
           )}
           {filtered.map(p => (
             <ProductCard
               key={p.id}
               product={p}
-              onOpen={() => onOpen(p)}
+              onOpen={() => {
+                if (showBulkToolbar) toggleProductSelection(p.id);
+                else onOpen(p);
+              }}
               onOpenActions={onOpenActions}
               onComplete={onComplete}
-              selectable={canBulkDelete}
-              selected={selectedProductIds.has(p.id)}
-              onToggleSelected={toggleProductSelection}
+              selected={showBulkToolbar && selectedProductIds.has(p.id)}
             />
           ))}
         </div>
       </div>
 
       {!panel && (
-        <button className="fab" aria-label="Thêm sản phẩm" onClick={onAddProduct}>
-          <Icon.plus/> Thêm sản phẩm
+        <button className="fab" aria-label={t('addProject')} onClick={onAddProduct}>
+          <Icon.plus/> {t('addProject')}
         </button>
       )}
     </div>
@@ -2429,7 +2356,7 @@ function DesktopProductsSplit({
                         node={child}
                         depth={depth + 1}
                         onOpen={() => openChild(child)}
-                        onOpenActions={(e) => { e.stopPropagation(); openNodeActions(child); }}
+                        onOpenActions={openNodeActions}
                         onComplete={onCompleteNode}
                         active={child.id === activeId}
                       />
@@ -2531,14 +2458,34 @@ function ActionDateTimeFields({
   );
 }
 
-function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete, canDelete = true }) {
-  const nowFields = () => splitDeadlineForInput(new Date().toISOString());
+function WorkActionSheet({
+  action, defaultKind = 'note', onClose, onSave, onComplete, onDelete, canDelete = true,
+}) {
+  const { t } = useI18n();
+  const nowFields = () => currentLocalDateTimeForInput();
   const startInit = action
     ? splitActionDateTime(action.startedAt)
     : nowFields();
 
+  const [kind, setKind] = useState(normalizeWorkActionKind(action?.kind || defaultKind));
+  const isTextOnlyKind = kind === 'note' || kind === 'evaluation';
   const [title, setTitle] = useState(action?.title || '');
   const [note, setNote] = useState(action?.note || '');
+  const [noteContent, setNoteContent] = useState(
+    isSimpleNoteAction(action) || ['note', 'evaluation'].includes(normalizeWorkActionKind(action?.kind || defaultKind))
+      ? (action?.note || action?.title || '')
+      : '',
+  );
+  const kindLabels = useMemo(() => ({
+    note: t('workKindNote'),
+    evaluation: t('workKindEvaluation'),
+    discussion: t('workKindDiscussion'),
+  }), [t]);
+  const kindPlaceholders = useMemo(() => ({
+    note: t('workKindNotePlaceholder'),
+    evaluation: t('workKindEvaluationPlaceholder'),
+    discussion: t('workKindDiscussionPlaceholder'),
+  }), [t]);
   const [startDate, setStartDate] = useState(startInit.date);
   const [startTime, setStartTime] = useState(startInit.time);
   const [saving, setSaving] = useState(false);
@@ -2551,25 +2498,46 @@ function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete, canDel
     return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
   };
 
+  const buildTextEntry = () => {
+    const content = noteContent.trim();
+    if (!content) {
+      setErr(t('workErrNote'));
+      return null;
+    }
+    const iso = new Date().toISOString();
+    return {
+      id: action?.id || newWorkActionId(),
+      kind: normalizeWorkActionKind(kind),
+      title: content.split('\n')[0].slice(0, 120),
+      note: content,
+      startedAt: action?.startedAt || iso,
+      endedAt: iso,
+      status: 'completed',
+    };
+  };
+
   const buildEntry = (markComplete = false) => {
+    if (isTextOnlyKind) return buildTextEntry();
+
     const trimmed = title.trim();
     if (!trimmed) {
-      setErr('Nhập mô tả hành động.');
+      setErr(t('workErrTitle'));
       return null;
     }
     if (!startDate) {
-      setErr('Chọn ngày bắt đầu.');
+      setErr(t('workErrDate'));
       return null;
     }
     const startedAt = combineDeadlineLocal(startDate, resolveTime(startDate, startTime, true));
     if (!startedAt) {
-      setErr('Giờ bắt đầu không hợp lệ.');
+      setErr(t('workErrTime'));
       return null;
     }
     const status = markComplete ? 'completed' : (action?.status || 'in_progress');
     const endedAt = markComplete ? new Date().toISOString() : (action?.endedAt || null);
     return {
       id: action?.id || newWorkActionId(),
+      kind: normalizeWorkActionKind(kind),
       title: trimmed,
       note: note.trim(),
       startedAt,
@@ -2592,11 +2560,15 @@ function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete, canDel
   };
 
   const handleSave = async () => {
-    const entry = buildEntry(false);
+    const entry = isTextOnlyKind ? buildTextEntry() : buildEntry(false);
     if (entry) await persistEntry(entry);
   };
 
   const handleComplete = async () => {
+    if (isTextOnlyKind) {
+      await handleSave();
+      return;
+    }
     const entry = buildEntry(true);
     if (!entry) return;
     if (onComplete) {
@@ -2621,77 +2593,124 @@ function WorkActionSheet({ action, onClose, onSave, onComplete, onDelete, canDel
     setStartTime(s.time);
   };
 
+  const sheetTitle = action
+    ? t('workSheetEdit', { kind: kindLabels[kind] })
+    : t('workSheetNew', { kind: kindLabels[kind] });
+
   return (
-    <Sheet title={action ? 'Sửa hành động' : 'Hành động tôi đã làm'} onClose={onClose}>
+    <Sheet title={sheetTitle} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="work-action-title">Bạn đã làm gì?</label>
-          <input
-            id="work-action-title"
-            className="field-input"
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ví dụ: Đồng bộ data lên excel…"
-            autoFocus
-          />
+          <span className="field-label">{t('workKindLabel')}</span>
+          <div className="work-action-kind-picker" role="radiogroup" aria-label={t('workKindLabel')}>
+            {WORK_ACTION_KINDS.filter((itemKind) => itemKind !== 'discussion').map((itemKind) => (
+              <button
+                key={itemKind}
+                type="button"
+                role="radio"
+                aria-checked={kind === itemKind}
+                className={`work-action-kind-pill work-action-kind-pill--${itemKind} ${kind === itemKind ? 'active' : ''}`}
+                onClick={() => {
+                  if ((itemKind === 'note' || itemKind === 'evaluation') && !isTextOnlyKind) {
+                    setNoteContent([title, note].filter(Boolean).join('\n').trim());
+                  }
+                  setKind(itemKind);
+                }}
+              >
+                {kindLabels[itemKind]}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="field">
-          <label className="field-label" htmlFor="work-action-note">Ghi chú</label>
-          <textarea
-            id="work-action-note"
-            className="field-input"
-            rows={3}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Chi tiết thêm, kết quả, lưu ý… (tuỳ chọn)"
-          />
-        </div>
+        {isTextOnlyKind ? (
+          <div className="field">
+            <label className="field-label" htmlFor="work-note-content">{t('workNoteContent')}</label>
+            <textarea
+              id="work-note-content"
+              className="field-input"
+              rows={6}
+              value={noteContent}
+              onChange={(e) => setNoteContent(e.target.value)}
+              placeholder={kindPlaceholders[kind]}
+              autoFocus
+            />
+          </div>
+        ) : (
+          <>
+            <div className="field">
+              <label className="field-label" htmlFor="work-action-title">{t('workMainContent')}</label>
+              <input
+                id="work-action-title"
+                className="field-input"
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={kindPlaceholders[kind]}
+                autoFocus
+              />
+            </div>
 
-        <ActionDateTimeFields
-          label="Giờ bắt đầu"
-          dateId="work-action-start-date"
-          timeId="work-action-start-time"
-          date={startDate}
-          time={startTime}
-          onDateChange={setStartDate}
-          onTimeChange={setStartTime}
-          note="Bấm «Bây giờ» để lấy thời điểm hiện tại."
-        />
-        <div className="btn-row btn-row--tight">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={stampNowStart}>
-            Bây giờ (bắt đầu)
-          </button>
-        </div>
+            <div className="field">
+              <label className="field-label" htmlFor="work-action-note">{t('workNoteDetail')}</label>
+              <textarea
+                id="work-action-note"
+                className="field-input"
+                rows={3}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder={t('workNoteDetailPlaceholder')}
+              />
+            </div>
 
-        {action?.endedAt && (
-          <p className="field-note">
-            Giờ kết thúc: <strong>{formatWorkActionWhen(action.endedAt)}</strong>
-          </p>
-        )}
-        {!action?.endedAt && (
-          <p className="field-note">
-            Giờ kết thúc sẽ được ghi nhận khi bạn bấm <strong>Hoàn thành</strong>.
-          </p>
+            <ActionDateTimeFields
+              label={t('workStartTime')}
+              dateId="work-action-start-date"
+              timeId="work-action-start-time"
+              date={startDate}
+              time={startTime}
+              onDateChange={setStartDate}
+              onTimeChange={setStartTime}
+              note="Bấm «Bây giờ» để lấy thời điểm hiện tại."
+            />
+            <div className="btn-row btn-row--tight">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={stampNowStart}>
+                {t('workNowStart')}
+              </button>
+            </div>
+
+            {action?.endedAt && (
+              <p className="field-note">
+                {t('workEndAt', { time: formatWorkActionWhen(action.endedAt) })}
+              </p>
+            )}
+            {!action?.endedAt && (
+              <p className="field-note">{t('workEndRecorded')}</p>
+            )}
+          </>
         )}
 
         {err && <p className="form-error">{err}</p>}
 
-        {(!action || isWorkActionInProgress(action)) && (
+        {!isTextOnlyKind && (!action || isWorkActionInProgress(action)) && (
           <button
             type="button"
             className="btn btn-primary btn-block"
             disabled={saving}
             onClick={handleComplete}
           >
-            {saving ? 'Đang lưu…' : 'Hoàn thành'}
+            {saving ? t('workSaving') : t('workComplete')}
           </button>
         )}
 
         <div className="btn-row">
-          <button type="button" className="btn btn-secondary" disabled={saving} onClick={handleSave}>
-            {saving ? 'Đang lưu…' : 'Lưu'}
+          <button
+            type="button"
+            className={`btn ${isTextOnlyKind ? 'btn-primary' : 'btn-secondary'}`}
+            disabled={saving}
+            onClick={handleSave}
+          >
+            {saving ? t('workSaving') : t('workSave')}
           </button>
           {action && onDelete && canDelete && (
             <button
@@ -2896,7 +2915,7 @@ function SheetHint({ label, name }) {
 }
 
 function currentDateTimeForInput() {
-  return splitDeadlineForInput(new Date().toISOString());
+  return currentLocalDateTimeForInput();
 }
 
 function DeadlineDateTimeFields({
@@ -3424,17 +3443,17 @@ function AddProductSheet({ onClose, onSave }) {
   };
 
   return (
-    <Sheet title="Thêm sản phẩm" onClose={onClose}>
+    <Sheet title="Thêm dự án" onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="add-product-name">Tên sản phẩm</label>
+          <label className="field-label" htmlFor="add-product-name">Tên dự án</label>
           <input
             id="add-product-name"
             className="field-input"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Nhập tên sản phẩm..."
+            placeholder="Nhập tên dự án..."
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
           />
@@ -3472,7 +3491,7 @@ function AddProductSheet({ onClose, onSave }) {
 
 function nodeLevelLabel(node) {
   const table = node?._source?.table;
-  if (table === 'projects') return 'sản phẩm';
+  if (table === 'projects') return 'dự án';
   if (table === 'features') return 'hạng mục';
   if (table === 'tasks') {
     return node._source?.parentTaskId ? 'sub-task' : 'công việc';
@@ -3502,7 +3521,7 @@ function deleteImpactText(node) {
   const features = node.children?.length || 0;
   let tasks = 0;
   (node.children || []).forEach((f) => { tasks += (f.children || []).length; });
-  return `Sản phẩm «${node.name}», ${features} hạng mục và ${tasks} công việc sẽ bị xóa vĩnh viễn.`;
+  return `Dự án «${node.name}», ${features} hạng mục và ${tasks} công việc sẽ bị xóa vĩnh viễn.`;
 }
 
 function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelete, canDelete = true }) {
@@ -3710,7 +3729,8 @@ function AssigneeSheet({ node, onClose, onSave }) {
 }
 
 // ─── Root App ─────────────────────────────────────────────────────
-function App({ t }) {
+function App({ t: tweakSettings }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const { tab, stack, personId } = useMemo(
@@ -3775,7 +3795,7 @@ function App({ t }) {
         writeStoredCurrentUserId(nextCurrentUserId);
       } catch (err) {
         if (cancelled) return;
-        setLoadError(err.message || 'Không tải được dữ liệu từ Supabase');
+        setLoadError(err.message || t('loadError'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -4003,8 +4023,9 @@ function App({ t }) {
   }, []);
 
   const persistWorkActionsForNode = useCallback(async (node, actions) => {
-    if (!node?._source || node._source.table !== 'tasks') return;
-    await saveTaskWorkActions(node, actions);
+    const table = node?._source?.table;
+    if (!table || (table !== 'tasks' && table !== 'features' && table !== 'projects')) return;
+    await saveNodeWorkActions(node, actions);
     updateNode(node.id, (n) => { n.workActions = [...actions]; });
   }, []);
 
@@ -4139,17 +4160,36 @@ function App({ t }) {
       : undefined,
     docLinksSupported,
     projectDocLinksSupported,
-    onOpenWorkAction: (action) => setSheet({
-      type: 'workAction',
-      action: action || null,
-      nodeId: currentId,
-    }),
+    onOpenWorkAction: (action, defaultKind = 'note') => {
+      const kind = normalizeWorkActionKind(action?.kind || defaultKind);
+      if (kind === 'discussion') return;
+      setSheet({
+        type: 'workAction',
+        action: action || null,
+        defaultKind: kind,
+        nodeId: currentId,
+      });
+    },
     onCompleteWorkAction: async (action) => {
       const node = findNode(currentId);
       if (!node || !action) return;
       const list = (node.workActions || []).map((a) => (
         a.id === action.id ? completeWorkAction(a) : a
       ));
+      await persistWorkActionsForNode(node, list);
+    },
+    onSendDiscussion: async (text, mentionIds) => {
+      const node = findNode(currentId);
+      if (!node) return;
+      const author = PEOPLE.find((p) => p.id === currentUserId);
+      const entry = newDiscussionMessage({
+        text,
+        authorId: currentUserId,
+        authorName: author?.name || '',
+        mentions: mentionIds,
+      });
+      if (!entry) return;
+      const list = [...(node.workActions || []), entry];
       await persistWorkActionsForNode(node, list);
     },
     onCompleteNode: handleCompleteNode,
@@ -4184,7 +4224,7 @@ function App({ t }) {
           subtaskSupported={subtaskSupported}
           currentUserId={currentUserId}
           depth={depth}
-          t={t}
+          t={tweakSettings}
           openProduct={openProduct}
           openChild={openChild}
           back={back}
@@ -4232,7 +4272,7 @@ function App({ t }) {
           parent={parentNode}
           projectNode={projectNode}
           subtaskSupported={subtaskSupported}
-          t={t}
+          t={tweakSettings}
           onOpenChild={openChild}
           onBack={back}
           onOpenActions={openNodeActions}
@@ -4260,6 +4300,13 @@ function App({ t }) {
     } else {
       screen = <PeopleHome products={visibleProducts} onOpenPerson={(id) => navigate(buildPersonPath(id, effectiveLayout))}/>;
     }
+  } else if (tab === 'settings') {
+    screen = (
+      <SettingsView
+        layout={effectiveLayout}
+        onBack={() => navigate(pathForTab('me', effectiveLayout))}
+      />
+    );
   } else if (tab === 'me' && currentUserId) {
     screen = <PersonDetail
       personId={currentUserId}
@@ -4269,6 +4316,7 @@ function App({ t }) {
       onOpenNode={jumpToNode}
       onOpenActions={openNodeActions}
       onEditPerson={(person) => setSheet({ type: 'editPerson', personId: person.id })}
+      onOpenSettings={() => navigate(pathForTab('settings', effectiveLayout))}
     />;
   }
 
@@ -4316,6 +4364,7 @@ function App({ t }) {
       {sheet && sheet.type === 'workAction' && sheetNode && (
         <WorkActionSheet
           action={sheet.action}
+          defaultKind={sheet.defaultKind || 'note'}
           onClose={() => setSheet(null)}
           canDelete={canDeleteWorkAction(accessRole, sheet.action, sheetNode, currentUserId)}
           onSave={async (entry) => {
@@ -4519,12 +4568,13 @@ function App({ t }) {
 function Root() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { t: translate } = useI18n();
   const { effectiveLayout, showIOSFrame, isNativeMobile, urlLayout } = useEffectiveLayout(location.pathname);
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [tweakSettings, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   useEffect(() => {
-    document.documentElement.style.setProperty('--accent', t.accent);
-    document.documentElement.style.setProperty('--bad', t.accent);
+    document.documentElement.style.setProperty('--accent', tweakSettings.accent);
+    document.documentElement.style.setProperty('--bad', tweakSettings.accent);
     const root = document.documentElement;
     root.classList.toggle('layout-desktop', effectiveLayout === 'desktop');
     root.classList.toggle('layout-mobile', effectiveLayout === 'mobile');
@@ -4533,44 +4583,44 @@ function Root() {
     return () => {
       root.classList.remove('layout-desktop', 'layout-mobile', 'layout-native-mobile', 'layout-preview-mobile');
     };
-  }, [t.accent, effectiveLayout, isNativeMobile, showIOSFrame]);
+  }, [tweakSettings.accent, effectiveLayout, isNativeMobile, showIOSFrame]);
 
   const desktopHref = swapLayoutPath(location.pathname, 'desktop');
   const mobileHref = swapLayoutPath(location.pathname, 'mobile');
   const tweaks = (
       <TweaksPanel>
-        <TweakSection label="Giao diện"/>
-        <TweakColor label="Màu nhấn"
-          value={t.accent}
+        <TweakSection label={translate('tweaksAppearance')}/>
+        <TweakColor label={translate('tweaksAccent')}
+          value={tweakSettings.accent}
           options={['#C8553D', '#D97757', '#3D6B8C', '#7B6BA0', '#4A8F6B', '#B07F3F']}
           onChange={(v) => setTweak('accent', v)}/>
-        <TweakRadio label="Mật độ"
-          value={t.density}
+        <TweakRadio label={translate('tweaksDensity')}
+          value={tweakSettings.density}
           options={['compact', 'comfy']}
           onChange={(v) => setTweak('density', v)}/>
-        <TweakSection label="Hiển thị"/>
-        <TweakToggle label="Thanh tiến độ" value={t.showProgressBar}
+        <TweakSection label={translate('tweaksDisplay')}/>
+        <TweakToggle label={translate('tweaksProgress')} value={tweakSettings.showProgressBar}
           onChange={(v) => setTweak('showProgressBar', v)}/>
-        <TweakToggle label="Khối số liệu" value={t.showStats}
+        <TweakToggle label={translate('tweaksStats')} value={tweakSettings.showStats}
           onChange={(v) => setTweak('showStats', v)}/>
-        <TweakSection label="Đường dẫn (URL)"/>
+        <TweakSection label={translate('tweaksRoutes')}/>
         <RouteLinks/>
         {effectiveLayout === 'mobile' && (
           <TweakButton
-            label="Mở giao diện máy tính (full màn)"
+            label={translate('settingsOpenDesktop')}
             onClick={() => navigate(desktopHref)}
           />
         )}
         {effectiveLayout === 'desktop' && urlLayout === 'desktop' && (
           <TweakButton
-            label="Mở giao diện điện thoại (khung preview)"
+            label={translate('settingsOpenMobile')}
             onClick={() => navigate(mobileHref)}
           />
         )}
       </TweaksPanel>
   );
 
-  const app = <App t={t}/>;
+  const app = <App t={tweakSettings}/>;
 
   if (effectiveLayout === 'desktop') {
     return (
