@@ -106,9 +106,18 @@ function StatusBlob({ status }) {
 }
 
 // ─── Progress bar ─────────────────────────────────────────────────
-function ProgressBar({ stats }) {
+function ProgressBar({ stats, percent = null }) {
   const { t } = useI18n();
   const { total, done, doing, fail } = stats;
+  const manualPercent = percent === null || percent === undefined || percent === '' ? null : Number(percent);
+  if (Number.isFinite(manualPercent)) {
+    const value = Math.max(0, Math.min(100, Math.round(manualPercent)));
+    return (
+      <div className="progress" aria-label={`${value}%`}>
+        {value > 0 && <span className="seg-done" style={{ width: `${value}%` }}/>}
+      </div>
+    );
+  }
   if (total === 0) return null;
   const pct = n => `${(n / total) * 100}%`;
   return (

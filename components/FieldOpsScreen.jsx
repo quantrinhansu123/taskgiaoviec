@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { TeamScheduleView } from './TeamScheduleView.jsx';
+import { StandaloneScheduleView } from './StandaloneScheduleView.jsx';
 import { PersonalScheduleView } from './PersonalScheduleView.jsx';
 import { LaborReportView } from './LaborReportView.jsx';
 import { isAdmin } from '../lib/permissions.js';
@@ -53,7 +53,7 @@ export function FieldOpsScreen({ products, people, accessRole, defaultTab = 'sch
       )}
 
       {tab === 'schedule' ? (
-        <TeamScheduleView products={products} people={people} embedded showControls={controlsOpen} />
+        <StandaloneScheduleView products={products} people={people} />
       ) : tab === 'personal' ? (
         <PersonalScheduleView
           products={products}

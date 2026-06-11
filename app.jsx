@@ -7,6 +7,8 @@ import {
   saveNodePatch,
   saveNodeFull,
   savePersonProfile,
+  createPersonProfile,
+  deletePersonProfile,
   saveTaskPhotos,
   saveNodeWorkActions,
   saveFeatureDocLinks,
@@ -15,11 +17,12 @@ import {
   deleteNode,
   createChildNode,
   createProduct,
-  getLoggedInPersonId,
   saveProjectSiteLocation,
   saveProjectAttendance,
   saveProjectTeamSchedules,
   saveProjectStartedAt,
+  saveProjectGoodsPercent,
+  authenticatePersonLogin,
   canAddChildren,
   addChildLabels,
   resolveAddChildParent,
@@ -72,7 +75,6 @@ import {
   filterProductsForUser,
   readStoredAccessRole,
   writeStoredAccessRole,
-  ACCESS_ROLE,
 } from './lib/permissions.js';
 import { checkoutSession } from './lib/attendance.js';
 import { newTeamScheduleId } from './lib/siteLocation.js';
@@ -84,7 +86,7 @@ import { DateTimeFields } from './components/DateTimeFields.jsx';
 import { AttendanceEmbedView } from './components/AttendanceEmbedView.jsx';
 import {
   PEOPLE,
-  setPeople,
+  setPeople as setGlobalPeople,
   setPathIndex,
   pathIndex,
   LEVEL_LABEL,
@@ -143,6 +145,14 @@ function writeStoredCurrentUserId(userId) {
     if (userId) window.localStorage.setItem(CURRENT_USER_STORAGE_KEY, userId);
   } catch {
     // Ignore storage errors; the app can still infer a user for this session.
+  }
+}
+
+function clearStoredCurrentUserId() {
+  try {
+    window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors.
   }
 }
 
@@ -608,6 +618,83 @@ function NodeDetail({
       </div>
     );
   };
+  const renderDesktopEntryPreviewItem = (kind, action) => {
+    const text = (action.note || action.title || '').replace(/\r\n/g, '\n');
+    const when = formatWorkActionRange(action);
+
+    if (kind === 'discussion') {
+      const author = projectPeople.find((p) => p.id === action.authorId)
+        || (action.title ? { name: action.title, initials: action.title.slice(0, 2).toUpperCase(), color: '#7B6BA0' } : null);
+      return (
+        <button
+          key={action.id}
+          type="button"
+          className="desktop-entry-preview-item desktop-entry-preview-item--discussion"
+          onClick={() => openEntryModal('discussion')}
+        >
+          {author && (
+            <span className="desktop-entry-preview-avatar" style={{ background: author.color || '#7B6BA0' }}>
+              {author.initials || author.name?.slice(0, 2)}
+            </span>
+          )}
+          <span className="desktop-entry-preview-body">
+            <span className="desktop-entry-preview-meta">
+              {author?.name || workKindLabels.discussion}
+              {when ? ` · ${when}` : ''}
+            </span>
+            <span className="desktop-entry-preview-text">{text}</span>
+          </span>
+        </button>
+      );
+    }
+
+    return (
+      <button
+        key={action.id}
+        type="button"
+        className={`desktop-entry-preview-item desktop-entry-preview-item--${kind}`}
+        onClick={() => onOpenWorkAction(action)}
+      >
+        <span className="desktop-entry-preview-text">{text}</span>
+        {when && <span className="desktop-entry-preview-meta">{when}</span>}
+      </button>
+    );
+  };
+  const renderDesktopEntryPreviewColumn = (kind) => {
+    const items = workActionsByKind[kind] || [];
+    const limit = kind === 'discussion' ? 3 : 2;
+    const visibleItems = items.slice(0, limit);
+    const moreCount = Math.max(0, items.length - visibleItems.length);
+
+    return (
+      <div key={kind} className={`desktop-entry-preview-col desktop-entry-preview-col--${kind}`}>
+        <div className="desktop-entry-preview-list">
+          {visibleItems.length > 0 ? (
+            <>
+              {visibleItems.map((action) => renderDesktopEntryPreviewItem(kind, action))}
+              {moreCount > 0 && (
+                <button
+                  type="button"
+                  className="desktop-entry-preview-more"
+                  onClick={() => openEntryModal(kind)}
+                >
+                  +{moreCount} mục khác
+                </button>
+              )}
+            </>
+          ) : (
+            <button
+              type="button"
+              className="desktop-entry-preview-empty"
+              onClick={() => (kind === 'discussion' ? openEntryModal(kind) : onOpenWorkAction(null, kind))}
+            >
+              {translate('workAddKind', { kind: workKindLabels[kind] })}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
   const canLogWork = (
     node?._source?.table === 'tasks'
     || node?._source?.table === 'features'
@@ -802,6 +889,9 @@ function NodeDetail({
                 </button>
               ))}
             </div>
+            <div className="desktop-entry-preview-grid">
+              {WORK_ACTION_KINDS.map(renderDesktopEntryPreviewColumn)}
+            </div>
           </div>
         )}
 
@@ -995,11 +1085,29 @@ function NodeDetail({
   );
 }
 
+function personRoleKey(role = '') {
+  const raw = role.toLowerCase();
+  if (raw.includes('admin')) return 'admin';
+  if (raw.includes('trưởng') || raw.includes('leader')) return 'leader';
+  return 'employee';
+}
+
+function localizedPersonRole(role, locale = 'vi') {
+  const key = personRoleKey(role);
+  if (locale === 'en') {
+    if (key === 'admin') return 'Admin';
+    if (key === 'leader') return 'Leaders';
+    return 'Employees';
+  }
+  if (key === 'admin') return 'Admin';
+  if (key === 'leader') return 'Trưởng nhóm';
+  return 'Nhân viên';
+}
+
 // ─── People Home ──────────────────────────────────────────────────
-function PeopleHome({ products, onOpenPerson }) {
-  const { t, statusMeta } = useI18n();
+function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }) {
+  const { t, statusMeta, locale } = useI18n();
   const [search, setSearch] = useState('');
-  const [dept, setDept] = useState('all');
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef(null);
 
@@ -1028,25 +1136,74 @@ function PeopleHome({ products, onOpenPerson }) {
     });
   }, [enriched, statusTab]);
 
-  const depts = useMemo(() => {
-    const set = new Set(PEOPLE.map(p => p.dept));
-    return ['all', ...set];
-  }, []);
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return enriched.filter(({ p }) => {
-      if (dept !== 'all' && p.dept !== dept) return false;
-      if (q && !(p.name.toLowerCase().includes(q) || p.role.toLowerCase().includes(q))) return false;
+      const roleLabel = localizedPersonRole(p.role, locale).toLowerCase();
+      if (q && !(p.name.toLowerCase().includes(q) || roleLabel.includes(q))) return false;
       return true;
     });
-  }, [enriched, search, dept]);
+  }, [enriched, search, locale]);
+
+  const roleColumns = useMemo(() => {
+    const columns = [
+      { key: 'admin', title: localizedPersonRole('admin', locale), items: [] },
+      { key: 'leader', title: localizedPersonRole('leader', locale), items: [] },
+      { key: 'employee', title: localizedPersonRole('employee', locale), items: [] },
+    ];
+    const byKey = new Map(columns.map((col) => [col.key, col]));
+    filtered.forEach((item) => {
+      const col = byKey.get(personRoleKey(item.p.role)) || byKey.get('employee');
+      col.items.push(item);
+    });
+    return columns;
+  }, [filtered, locale]);
 
   const teamStats = useMemo(() => {
     let total = 0, overdue = 0;
     enriched.forEach(({ stats }) => { total += stats.total; overdue += stats.overdue; });
     return { totalWork: total, overdue, online: PEOPLE.filter(p => p.status === 'online').length };
   }, [enriched]);
+
+  const renderPersonCard = ({ p, stats }) => (
+    <div
+      key={p.id}
+      className={`person-card ${stats.overdue > 0 ? 'has-overdue' : ''}`}
+      onClick={() => onOpenPerson(p.id)}
+    >
+      <div className="av-big" style={{ background: p.color }}>
+        {p.initials}
+        <span className={`presence ${p.status}`}/>
+      </div>
+      <div className="info">
+        <div className="p-name">{p.name}</div>
+        <div className="p-role">
+          {p.dept && <span className="p-dept-pill">{p.dept}</span>}
+          {localizedPersonRole(p.role, locale)}
+        </div>
+        <div className="p-stats">
+          <span><b>{stats.total}</b> việc</span>
+          {stats.fail > 0 && <span><b>{stats.fail}</b> lỗi</span>}
+          {stats.overdue > 0 && <span className="has-overdue-text">{stats.overdue} trễ</span>}
+          {stats.total > 0 && stats.fail === 0 && stats.overdue === 0 && (
+            <span style={{color:'var(--good)'}}>Đúng tiến độ</span>
+          )}
+          {stats.total === 0 && <span style={{color:'var(--muted-2)'}}>Đang rảnh</span>}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="person-card-more icon-btn"
+        aria-label="Tùy chọn nhân sự"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenPersonActions?.(p);
+        }}
+      >
+        <Icon.more/>
+      </button>
+    </div>
+  );
 
   return (
     <div className="screen has-nav">
@@ -1059,7 +1216,7 @@ function PeopleHome({ products, onOpenPerson }) {
           <div className="title">{t('peopleTitle')}</div>
         </div>
         <button className="icon-btn" aria-label={t('filter')}><Icon.filter/></button>
-        <button className="icon-btn" aria-label={t('add')}><Icon.plus/></button>
+        <button className="icon-btn" aria-label={t('add')} onClick={onAddPerson}><Icon.plus/></button>
       </div>
 
       <div className="scroll" ref={scrollRef}>
@@ -1128,20 +1285,24 @@ function PeopleHome({ products, onOpenPerson }) {
           </div>
         </div>
 
-        <div className="filter-row" style={{ padding: '12px 16px 8px' }}>
-          {depts.map(d => (
-            <button
-              key={d}
-              className={`filter-pill ${dept===d ? 'active' : ''}`}
-              onClick={() => setDept(d)}
-            >
-              {d === 'all' ? 'Tất cả' : d}
-              {d !== 'all' && (
-                <span className="count-mini">
-                  {PEOPLE.filter(p => p.dept === d).length}
-                </span>
-              )}
-            </button>
+        <div className="people-kanban">
+          {roleColumns.map((column) => (
+            <section key={column.key} className={`people-kanban-column people-kanban-column--${column.key}`}>
+              <div className="people-kanban-head">
+                <div>
+                  <div className="people-kanban-title">{column.title}</div>
+                  <div className="people-kanban-sub">{column.items.length} nhân sự</div>
+                </div>
+                <span className="people-kanban-count">{column.items.length}</span>
+              </div>
+              <div className="people-kanban-list">
+                {column.items.length > 0 ? (
+                  column.items.map(renderPersonCard)
+                ) : (
+                  <div className="people-kanban-empty">Không có nhân sự ở vị trí này.</div>
+                )}
+              </div>
+            </section>
           ))}
         </div>
 
@@ -1149,35 +1310,7 @@ function PeopleHome({ products, onOpenPerson }) {
           {filtered.length === 0 && (
             <div className="empty">Không tìm thấy nhân sự nào.</div>
           )}
-          {filtered.map(({ p, stats }) => (
-            <div
-              key={p.id}
-              className={`person-card ${stats.overdue > 0 ? 'has-overdue' : ''}`}
-              onClick={() => onOpenPerson(p.id)}
-            >
-              <div className="av-big" style={{ background: p.color }}>
-                {p.initials}
-                <span className={`presence ${p.status}`}/>
-              </div>
-              <div className="info">
-                <div className="p-name">{p.name}</div>
-                <div className="p-role">
-                  <span className="p-dept-pill">{p.dept}</span>
-                  {p.role}
-                </div>
-                <div className="p-stats">
-                  <span><b>{stats.total}</b> việc</span>
-                  {stats.fail > 0 && <span><b>{stats.fail}</b> lỗi</span>}
-                  {stats.overdue > 0 && <span className="has-overdue-text">{stats.overdue} trễ</span>}
-                  {stats.total > 0 && stats.fail === 0 && stats.overdue === 0 && (
-                    <span style={{color:'var(--good)'}}>Đúng tiến độ</span>
-                  )}
-                  {stats.total === 0 && <span style={{color:'var(--muted-2)'}}>Đang rảnh</span>}
-                </div>
-              </div>
-              <Icon.chev className="chev"/>
-            </div>
-          ))}
+          {filtered.map(renderPersonCard)}
         </div>
       </div>
     </div>
@@ -1186,7 +1319,7 @@ function PeopleHome({ products, onOpenPerson }) {
 
 // ─── Person Detail ────────────────────────────────────────────────
 function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, onEditPerson, onOpenSettings, variant = 'person' }) {
-  const { t, statusMeta } = useI18n();
+  const { t, statusMeta, locale } = useI18n();
   const isMe = variant === 'me';
   const person = PEOPLE.find(p => p.id === personId);
   const [scrolled, setScrolled] = useState(false);
@@ -1328,8 +1461,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
           </div>
           <h1>{person.name}</h1>
           <div className="p-role-2">
-            <span className="p-dept-pill">{person.dept}</span>
-            {person.role}
+            {localizedPersonRole(person.role, locale)}
             <span style={{ width:3, height:3, borderRadius:'50%', background:'var(--muted-2)' }}/>
             <span style={{ color: person.status === 'online' ? 'var(--good)' : person.status === 'busy' ? '#5A4A1F' : 'var(--muted)', fontWeight: 600 }}>
               {person.status === 'online' ? t('online') : person.status === 'busy' ? t('busy') : t('offline')}
@@ -1773,10 +1905,12 @@ function FilterPill({ children, active, onClick, tone }) {
 }
 
 // ─── Product Card (richer top-level card) ─────────────────────────
-function ProductCard({ product, onOpen, onOpenActions, onComplete, selected = false }) {
+function ProductCard({ product, onOpen, onOpenActions, onComplete, onEditGoodsPercent, selected = false }) {
   const { t } = useI18n();
   const stats = aggregate(product);
-  const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+  const taskPct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+  const manualPct = product.goodsPercent !== null && product.goodsPercent !== undefined ? Number(product.goodsPercent) : null;
+  const pct = Number.isFinite(manualPct) ? Math.max(0, Math.min(100, Math.round(manualPct))) : taskPct;
   const tone = deadlineTone(product.deadline, product.status);
   const modules = (product.children || []).length;
   return (
@@ -1806,6 +1940,9 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, selected = fa
       </div>
       <div className="pc-meta">
         <StatusChip status={product.status}/>
+        {product.goodsPercent !== null && product.goodsPercent !== undefined && (
+          <span className="pc-goods-percent">{product.goodsPercent}% hoàn thành</span>
+        )}
         <span className={`chip deadline ${tone !== 'neutral' ? tone : ''}`}>
           <Icon.cal/>{formatDeadline(product.deadline)}
         </span>
@@ -1834,7 +1971,7 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, selected = fa
           )}
         </div>
         <div className="pc-progress-row">
-          <ProgressBar stats={stats}/>
+          <ProgressBar stats={stats} percent={manualPct}/>
           <div className="pct">{pct}%</div>
         </div>
         {typeof onComplete === 'function' && !product.completedAt && (
@@ -1848,6 +1985,19 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, selected = fa
           >
             <Icon.check/>
             {t('workComplete')}
+          </button>
+        )}
+        {typeof onEditGoodsPercent === 'function' && (
+          <button
+            type="button"
+            className="product-card-percent-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditGoodsPercent(product);
+            }}
+          >
+            <Icon.edit/>
+            Tỉ lệ hoàn thành
           </button>
         )}
       </div>
@@ -1865,6 +2015,7 @@ function productMatchesSearch(product, query) {
 
 function ProductsHome({
   products, onOpen, onOpenActions, onComplete, onAddProduct, onDeleteSelected,
+  onEditGoodsPercent,
   panel = false, currentUserId = null, canBulkDelete = false,
 }) {
   const { t, locale } = useI18n();
@@ -2112,6 +2263,7 @@ function ProductsHome({
               }}
               onOpenActions={onOpenActions}
               onComplete={onComplete}
+              onEditGoodsPercent={onEditGoodsPercent}
               selected={showBulkToolbar && selectedProductIds.has(p.id)}
             />
           ))}
@@ -2280,6 +2432,7 @@ function DesktopProductsSplit({
             onOpen={openProduct}
             onOpenActions={openNodeActions}
             onComplete={handleCompleteNode}
+            onEditGoodsPercent={detailProps.onEditGoodsPercent}
             panel
             currentUserId={currentUserId}
           />
@@ -3323,14 +3476,23 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
   );
 }
 
-function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
-  const [name, setName] = useState(person.name || '');
-  const [role, setRole] = useState(person.role || '');
-  const [dept, setDept] = useState(person.dept || '');
-  const [status, setStatus] = useState(person.status === 'online' ? 'online' : 'off');
-  const [accessRole, setAccessRole] = useState(
-    person.accessRole || readStoredAccessRole(person.id) || ACCESS_ROLE.WORKER,
-  );
+function EditPersonSheet({ person, onClose, onSave }) {
+  const { locale } = useI18n();
+  const isNew = !person?.id;
+  const roleOptions = [
+    { value: 'admin', label: 'Admin' },
+    { value: 'leader', label: locale === 'en' ? 'Leaders' : 'Trưởng nhóm' },
+    { value: 'employee', label: locale === 'en' ? 'Employees' : 'Nhân viên' },
+  ];
+  const normalizeRoleOption = (value) => {
+    return personRoleKey(value);
+  };
+  const [name, setName] = useState(person?.name || '');
+  const [email, setEmail] = useState(person?.email || '');
+  const [role, setRole] = useState(() => normalizeRoleOption(person?.role));
+  const [dept, setDept] = useState(person?.dept || '');
+  const [phone, setPhone] = useState(person?.phone || '');
+  const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -3338,7 +3500,7 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
     setErr('');
     setSaving(true);
     try {
-      await onSave({ name, role, dept, status, accessRole: showAccessRole ? accessRole : undefined });
+      await onSave({ name, email, role, dept, phone, password });
       onClose();
     } catch (e) {
       setErr(e.message || 'Không lưu được nhân sự');
@@ -3348,7 +3510,7 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
   };
 
   return (
-    <Sheet title="Sửa nhân sự" onClose={onClose}>
+    <Sheet title={isNew ? 'Thêm nhân sự' : 'Sửa nhân sự'} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
           <label className="field-label" htmlFor="edit-person-name">Tên nhân sự</label>
@@ -3362,56 +3524,65 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
           />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="edit-person-role">Vai trò</label>
+          <label className="field-label" htmlFor="edit-person-email">Email</label>
           <input
-            id="edit-person-role"
+            id="edit-person-email"
             className="field-input"
-            type="text"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="email@congty.com"
           />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="edit-person-dept">Phòng ban</label>
+          <label className="field-label" htmlFor="edit-person-phone">{locale === 'en' ? 'Phone' : 'SĐT'}</label>
+          <input
+            id="edit-person-phone"
+            className="field-input"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label className="field-label" htmlFor="edit-person-password">Password</label>
+          <input
+            id="edit-person-password"
+            className="field-input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={isNew ? 'Password' : (locale === 'en' ? 'Leave blank to keep current password' : 'Để trống nếu không đổi password')}
+          />
+        </div>
+        <div className="field">
+          <label className="field-label" htmlFor="edit-person-role">{locale === 'en' ? 'Role' : 'Vai trò'}</label>
+          <select
+            id="edit-person-role"
+            className="field-input"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          >
+            {roleOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label className="field-label" htmlFor="edit-person-dept">Team</label>
           <input
             id="edit-person-dept"
             className="field-input"
             type="text"
             value={dept}
             onChange={(e) => setDept(e.target.value)}
+            placeholder={locale === 'en' ? 'Team' : 'Ví dụ: Kỹ thuật, Kinh doanh...'}
           />
         </div>
-        <div className="field">
-          <label className="field-label" htmlFor="edit-person-status">Trạng thái</label>
-          <select
-            id="edit-person-status"
-            className="field-input"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="online">Online</option>
-            <option value="off">Offline</option>
-          </select>
-        </div>
-        {showAccessRole && (
-          <div className="field">
-            <label className="field-label" htmlFor="edit-person-access">Quyền truy cập</label>
-            <select
-              id="edit-person-access"
-              className="field-input"
-              value={accessRole}
-              onChange={(e) => setAccessRole(e.target.value)}
-            >
-              <option value={ACCESS_ROLE.ADMIN}>Admin — toàn quyền</option>
-              <option value={ACCESS_ROLE.WORKER}>Thợ hiện trường</option>
-            </select>
-            <p className="field-note">Admin: xóa/sửa mọi Job, xem báo cáo. Thợ: chỉ Job được giao.</p>
-          </div>
-        )}
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Đang lưu…' : 'Lưu thay đổi'}
+            {saving ? 'Đang lưu…' : isNew ? 'Thêm nhân sự' : 'Lưu thay đổi'}
           </button>
           <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
         </div>
@@ -3489,6 +3660,69 @@ function AddProductSheet({ onClose, onSave }) {
   );
 }
 
+function ProductGoodsPercentSheet({ product, onClose, onSave }) {
+  const [value, setValue] = useState(
+    product?.goodsPercent !== null && product?.goodsPercent !== undefined ? String(product.goodsPercent) : ''
+  );
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const handleSave = async () => {
+    setErr('');
+    const trimmed = value.trim();
+    const nextValue = trimmed === '' ? null : Number(trimmed);
+    if (nextValue !== null && (!Number.isFinite(nextValue) || nextValue < 0 || nextValue > 100)) {
+      setErr('Nhập tỷ lệ từ 0 đến 100.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(nextValue);
+      onClose();
+    } catch (e) {
+      setErr(e.message || 'Không lưu được tỉ lệ hoàn thành');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Sheet title="Tỉ lệ hoàn thành" onClose={onClose}>
+      <div className="form-stack">
+        <SheetHint label="Sản phẩm" name={product?.name || ''} />
+        <div className="field">
+          <label className="field-label" htmlFor="product-goods-percent">Phần trăm hoàn thành</label>
+          <div className="percent-input-wrap">
+            <input
+              id="product-goods-percent"
+              className="field-input"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              max="100"
+              step="1"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="0"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
+            />
+            <span>%</span>
+          </div>
+          <p className="field-hint">Để trống nếu muốn xóa tỷ lệ đã nhập.</p>
+        </div>
+        {err && <p className="form-error">{err}</p>}
+        <div className="btn-row">
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Đang lưu...' : 'Lưu tỷ lệ'}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
 function nodeLevelLabel(node) {
   const table = node?._source?.table;
   if (table === 'projects') return 'dự án';
@@ -3553,6 +3787,62 @@ function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelet
           </button>
         )}
       </div>
+      </div>
+    </Sheet>
+  );
+}
+
+function PersonActionsSheet({ person, onClose, onEdit, onDelete }) {
+  return (
+    <Sheet title="Tùy chọn nhân sự" onClose={onClose}>
+      <div className="form-stack">
+        <SheetHint label="Nhân sự" name={person.name} />
+        <div className="node-actions-list">
+          <button type="button" className="node-action-btn" onClick={onEdit}>
+            <Icon.edit />
+            <span>Sửa nhân sự</span>
+          </button>
+          <button type="button" className="node-action-btn danger" onClick={onDelete}>
+            <Icon.trash />
+            <span>Xóa nhân sự</span>
+          </button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+function ConfirmDeletePersonSheet({ person, onClose, onConfirm }) {
+  const [deleting, setDeleting] = useState(false);
+  const [err, setErr] = useState('');
+
+  const handleConfirm = async () => {
+    setErr('');
+    setDeleting(true);
+    try {
+      await onConfirm();
+      onClose();
+    } catch (e) {
+      setErr(e.message || 'Không xóa được nhân sự');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <Sheet title="Xóa nhân sự" onClose={onClose}>
+      <div className="form-stack">
+        <SheetHint label="Nhân sự" name={person.name} />
+        <p className="field-note">
+          Nhân sự này sẽ bị xóa khỏi danh sách. Các công việc đang gán cho nhân sự này sẽ được gỡ người phụ trách.
+        </p>
+        {err && <p className="form-error">{err}</p>}
+        <div className="btn-row">
+          <button type="button" className="btn btn-danger" onClick={handleConfirm} disabled={deleting}>
+            {deleting ? 'Đang xóa...' : 'Xóa nhân sự'}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={deleting}>Hủy</button>
+        </div>
       </div>
     </Sheet>
   );
@@ -3729,6 +4019,81 @@ function AssigneeSheet({ node, onClose, onSave }) {
 }
 
 // ─── Root App ─────────────────────────────────────────────────────
+function LoginView({ loading, error, onLogin }) {
+  const { locale } = useI18n();
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setLoginError('');
+    setSubmitting(true);
+    try {
+      await onLogin({ phone, password });
+    } catch (err) {
+      setLoginError(err.message || 'Không đăng nhập được');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const isEn = locale === 'en';
+  const disabled = loading || submitting;
+
+  return (
+    <div className="login-screen">
+      <form className="login-panel" onSubmit={handleSubmit}>
+        <div className="login-brand">
+          <img src={APP_LOGO} alt={APP_NAME} className="login-logo" />
+          <div>
+            <div className="login-company">{APP_NAME}</div>
+            <div className="login-subtitle">{isEn ? 'Work management' : 'Quản lý công việc'}</div>
+          </div>
+        </div>
+
+        <div className="login-heading">
+          <h1>{isEn ? 'Sign in' : 'Đăng nhập'}</h1>
+          <p>{isEn ? 'Use your phone number and password.' : 'Dùng SĐT và password nhân sự để vào app.'}</p>
+        </div>
+
+        <label className="login-field">
+          <span>{isEn ? 'Phone' : 'SĐT'}</span>
+          <input
+            type="tel"
+            inputMode="tel"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            autoComplete="tel"
+            autoFocus
+            placeholder="0900000000"
+          />
+        </label>
+
+        <label className="login-field">
+          <span>Password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            placeholder="Password"
+          />
+        </label>
+
+        {(error || loginError) && (
+          <div className="login-error">{loginError || error}</div>
+        )}
+
+        <button type="submit" className="login-submit" disabled={disabled}>
+          {disabled ? (isEn ? 'Signing in...' : 'Đang đăng nhập...') : (isEn ? 'Sign in' : 'Đăng nhập')}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function App({ t: tweakSettings }) {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -3743,6 +4108,7 @@ function App({ t: tweakSettings }) {
   const isDesktop = effectiveLayout === 'desktop';
 
   const [products, setProducts] = useState([]);
+  const [people, setPeople] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [sheet, setSheet] = useState(null);
@@ -3754,10 +4120,10 @@ function App({ t: tweakSettings }) {
   const [accessRoleSupported, setAccessRoleSupported] = useState(false);
 
   const accessRole = useMemo(() => {
-    const person = PEOPLE.find((p) => p.id === currentUserId);
+    const person = people.find((p) => p.id === currentUserId);
     const stored = currentUserId ? readStoredAccessRole(currentUserId) : null;
     return resolveAccessRole(person, stored);
-  }, [currentUserId, products]);
+  }, [currentUserId, people]);
 
   const visibleProducts = useMemo(
     () => filterProductsForUser(products, currentUserId, accessRole),
@@ -3781,6 +4147,7 @@ function App({ t: tweakSettings }) {
           accessRoleSupported: roleOk,
         } = await fetchAppData();
         if (cancelled) return;
+        setGlobalPeople(people);
         setPeople(people);
         setPathIndex(nextProducts);
         setProducts(nextProducts);
@@ -3789,10 +4156,10 @@ function App({ t: tweakSettings }) {
         setProjectDocLinksSupported(projDocOk !== false);
         setProjectFieldSettingsSupported(fieldOk !== false);
         setAccessRoleSupported(roleOk === true);
-        const loggedInPersonId = await getLoggedInPersonId(people);
-        const nextCurrentUserId = resolveCurrentUserId(people, nextProducts, loggedInPersonId);
+        const storedUserId = readStoredCurrentUserId();
+        const nextCurrentUserId = people.some((p) => p.id === storedUserId) ? storedUserId : null;
         setCurrentUserId(nextCurrentUserId);
-        writeStoredCurrentUserId(nextCurrentUserId);
+        if (!nextCurrentUserId) clearStoredCurrentUserId();
       } catch (err) {
         if (cancelled) return;
         setLoadError(err.message || t('loadError'));
@@ -3885,6 +4252,7 @@ function App({ t: tweakSettings }) {
       projectFieldSettingsSupported: fieldOk,
       accessRoleSupported: roleOk,
     } = await fetchAppData();
+    setGlobalPeople(people);
     setPeople(people);
     setPathIndex(nextProducts);
     setProducts(nextProducts);
@@ -3893,13 +4261,29 @@ function App({ t: tweakSettings }) {
     setProjectDocLinksSupported(projDocOk !== false);
     setProjectFieldSettingsSupported(fieldOk !== false);
     setAccessRoleSupported(roleOk === true);
-    const loggedInPersonId = await getLoggedInPersonId(people);
     setCurrentUserId((prev) => {
-      const nextCurrentUserId = resolveCurrentUserId(people, nextProducts, loggedInPersonId || prev);
-      writeStoredCurrentUserId(nextCurrentUserId);
+      const nextCurrentUserId = people.some((p) => p.id === prev) ? prev : null;
+      if (nextCurrentUserId) writeStoredCurrentUserId(nextCurrentUserId);
+      else clearStoredCurrentUserId();
       return nextCurrentUserId;
     });
   }, []);
+
+  const handleLogin = useCallback(async ({ phone, password }) => {
+    const session = await authenticatePersonLogin({ phone, password });
+    setCurrentUserId(session.userId);
+    writeStoredCurrentUserId(session.userId);
+    if (session.accessRole) {
+      writeStoredAccessRole(session.userId, session.accessRole);
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    clearStoredCurrentUserId();
+    setSheet(null);
+    setCurrentUserId(null);
+    navigate(pathForTab('products', effectiveLayout), { replace: true });
+  }, [effectiveLayout, navigate]);
 
   const handleDeleteNode = useCallback(async (nodeId) => {
     if (!canDeleteNode(accessRole)) return;
@@ -3929,6 +4313,13 @@ function App({ t: tweakSettings }) {
     await saveProjectAttendance(projectNode, sessions);
     await reloadData();
   }, [reloadData]);
+
+  const persistGoodsPercentForProject = useCallback(async (projectNode, percent) => {
+    await saveProjectGoodsPercent(projectNode, percent);
+    updateNode(projectNode.id, (n) => {
+      n.goodsPercent = percent === null || percent === undefined ? null : Math.round(Number(percent));
+    });
+  }, []);
 
   const handleAttendanceCheckIn = useCallback(async (projectNode, session) => {
     const list = [...(projectNode.attendanceSessions || []), session];
@@ -4125,6 +4516,16 @@ function App({ t: tweakSettings }) {
     );
   }
 
+  if (!currentUserId) {
+    return (
+      <LoginView
+        loading={loading}
+        error={loadError}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
   const detailHandlers = {
     onCycleStatus: cycleStatus,
     onOpenPhoto: (ph) => setSheet({ type: 'photo', photo: ph, nodeId: currentId, viewOnly: false }),
@@ -4205,8 +4606,8 @@ function App({ t: tweakSettings }) {
   } else if (tab === 'schedule' || tab === 'labor') {
     screen = (
       <FieldOpsScreen
-        products={isAdmin(accessRole) ? products : visibleProducts}
-        people={PEOPLE}
+        products={visibleProducts}
+        people={people}
         accessRole={accessRole}
         defaultTab={scheduleDefaultTab}
         onOpenNode={openChild}
@@ -4229,6 +4630,7 @@ function App({ t: tweakSettings }) {
           openChild={openChild}
           back={back}
           openNodeActions={openNodeActions}
+          onEditGoodsPercent={(product) => setSheet({ type: 'goodsPercent', nodeId: product.id })}
           {...detailHandlers}
         />
       );
@@ -4240,6 +4642,7 @@ function App({ t: tweakSettings }) {
           onOpenActions={openNodeActions}
           onComplete={handleCompleteNode}
           onAddProduct={openAddProduct}
+          onEditGoodsPercent={(product) => setSheet({ type: 'goodsPercent', nodeId: product.id })}
           currentUserId={currentUserId}
           canBulkDelete
           onDeleteSelected={handleDeleteProducts}
@@ -4298,13 +4701,21 @@ function App({ t: tweakSettings }) {
         onEditPerson={(person) => setSheet({ type: 'editPerson', personId: person.id })}
       />;
     } else {
-      screen = <PeopleHome products={visibleProducts} onOpenPerson={(id) => navigate(buildPersonPath(id, effectiveLayout))}/>;
+      screen = (
+        <PeopleHome
+          products={visibleProducts}
+          onOpenPerson={(id) => navigate(buildPersonPath(id, effectiveLayout))}
+          onAddPerson={() => setSheet({ type: 'addPerson' })}
+          onOpenPersonActions={(person) => setSheet({ type: 'personActions', personId: person.id })}
+        />
+      );
     }
   } else if (tab === 'settings') {
     screen = (
       <SettingsView
         layout={effectiveLayout}
         onBack={() => navigate(pathForTab('me', effectiveLayout))}
+        onLogout={handleLogout}
       />
     );
   } else if (tab === 'me' && currentUserId) {
@@ -4437,6 +4848,13 @@ function App({ t: tweakSettings }) {
           }}
         />
       )}
+      {sheet && sheet.type === 'goodsPercent' && sheetNode && (
+        <ProductGoodsPercentSheet
+          product={sheetNode}
+          onClose={() => setSheet(null)}
+          onSave={(percent) => persistGoodsPercentForProject(sheetNode, percent)}
+        />
+      )}
       {sheet && sheet.type === 'addChild' && (() => {
         const parentForAdd = sheet.parentId ? findNode(sheet.parentId) : addChildParentNode;
         if (!parentForAdd) return null;
@@ -4497,7 +4915,7 @@ function App({ t: tweakSettings }) {
       {sheet && sheet.type === 'teamSchedule' && sheetNode && (
         <TeamScheduleSheet
           project={sheetNode}
-          teams={teamsFromPeople(PEOPLE)}
+          teams={teamsFromPeople(people)}
           schedule={sheet.schedule}
           onClose={() => setSheet(null)}
           onSave={async (entry) => {
@@ -4526,6 +4944,35 @@ function App({ t: tweakSettings }) {
           }}
         />
       )}
+      {sheet && sheet.type === 'addPerson' && (
+        <EditPersonSheet
+          person={null}
+          onClose={() => setSheet(null)}
+          showAccessRole={isAdmin(accessRole)}
+          onSave={async (payload) => {
+            const row = await createPersonProfile(payload);
+            if (payload.accessRole && row?.user_id) {
+              writeStoredAccessRole(row.user_id, payload.accessRole);
+            }
+            await reloadData();
+            if (row?.user_id) {
+              navigate(buildPersonPath(row.user_id, effectiveLayout));
+            }
+          }}
+        />
+      )}
+      {sheet && sheet.type === 'personActions' && (() => {
+        const person = PEOPLE.find((p) => p.id === sheet.personId);
+        if (!person) return null;
+        return (
+          <PersonActionsSheet
+            person={person}
+            onClose={() => setSheet(null)}
+            onEdit={() => setSheet({ type: 'editPerson', personId: person.id })}
+            onDelete={() => setSheet({ type: 'deletePerson', personId: person.id })}
+          />
+        );
+      })()}
       {sheet && sheet.type === 'editPerson' && (() => {
         const person = PEOPLE.find((p) => p.id === sheet.personId);
         if (!person) return null;
@@ -4544,6 +4991,24 @@ function App({ t: tweakSettings }) {
           />
         );
       })()}
+      {sheet && sheet.type === 'deletePerson' && (() => {
+        const person = PEOPLE.find((p) => p.id === sheet.personId);
+        if (!person) return null;
+        return (
+          <ConfirmDeletePersonSheet
+            person={person}
+            onClose={() => setSheet(null)}
+            onConfirm={async () => {
+              await deletePersonProfile(person.id);
+              if (currentUserId === person.id) {
+                setCurrentUserId(null);
+              }
+              await reloadData();
+              navigate(pathForTab('people', effectiveLayout));
+            }}
+          />
+        );
+      })()}
       {sheet && sheet.type === 'delete' && sheetNode && (
         <ConfirmDeleteSheet
           node={sheetNode}
@@ -4556,7 +5021,7 @@ function App({ t: tweakSettings }) {
 
   if (isDesktop) {
     return (
-      <DesktopShell alertCount={myStats.fail + myStats.overdue}>
+      <DesktopShell alertCount={myStats.fail + myStats.overdue} onLogout={handleLogout}>
         {view}
       </DesktopShell>
     );

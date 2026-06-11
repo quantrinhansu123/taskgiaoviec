@@ -5,7 +5,7 @@ import { pathForTab, swapLayoutPath } from '../lib/routes.js';
 import { useEffectiveLayout } from '../lib/useEffectiveLayout.js';
 import { Icon } from '../components.jsx';
 
-export function SettingsView({ onBack, layout = 'mobile' }) {
+export function SettingsView({ onBack, onLogout, layout = 'mobile' }) {
   const { locale, setLocale, t, locales } = useI18n();
   const navigate = useNavigate();
   const { effectiveLayout, urlLayout } = useEffectiveLayout(window.location.pathname);
@@ -93,6 +93,20 @@ export function SettingsView({ onBack, layout = 'mobile' }) {
             <span>1.0</span>
           </div>
         </section>
+
+        {typeof onLogout === 'function' && (
+          <section className="settings-section">
+            <div className="settings-action-list">
+              <button
+                type="button"
+                className="settings-action-btn settings-action-btn--danger"
+                onClick={onLogout}
+              >
+                Đăng xuất
+              </button>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

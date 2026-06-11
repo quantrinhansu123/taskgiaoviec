@@ -52,7 +52,7 @@ const NAV_ICONS = {
   ),
 };
 
-export function DesktopShell({ children, alertCount = 0 }) {
+export function DesktopShell({ children, alertCount = 0, onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { tab } = parseAppPath(location.pathname);
@@ -110,6 +110,15 @@ export function DesktopShell({ children, alertCount = 0 }) {
             </svg>
             {t('layoutSwitchMobile')}
           </Link>
+          {typeof onLogout === 'function' && (
+            <button type="button" className="desktop-layout-switch desktop-logout-btn" onClick={onLogout}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M10 6H6a2 2 0 00-2 2v8a2 2 0 002 2h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                <path d="M14 8l4 4-4 4M18 12H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Đăng xuất
+            </button>
+          )}
         </div>
       </aside>
 

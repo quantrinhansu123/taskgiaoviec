@@ -1,140 +1,360 @@
 import { useMemo, useState } from 'react';
 import {
   buildGanttData,
-  barSpansDays,
-  barSpansMonths,
   barColorForIndex,
   buildScheduleKpis,
-  formatColumnLabel,
-  weekStartMonday,
   monthStart,
   monthEnd,
   monthLabel,
-  yearLabel,
-  yearMonthKeys,
   addDays,
   teamsFromPeople,
 } from '../lib/teams.js';
 import { currentLocalDateTimeForInput, formatScheduleRange } from '../lib/deadline.js';
 import { useI18n } from '../lib/i18n.jsx';
 
-function KpiCard({ label, value, suffix, ring }) {
+const LABEL_W = 232;
+const COL_W = 41;
+const HEADER_H = 60;
+const LANE_H = 46;
+const BAR_H = 32;
+const GROUP_PAD = 14;
+
+const LEVEL_OPTIONS = [
+  ['product', 'Sản phẩm'],
+  ['task', 'Công việc'],
+  ['subtask', 'Sub-task'],
+];
+
+const STATUS_OPTIONS = [
+  ['all', 'Tất cả'],
+  ['active', 'Đang chạy'],
+  ['planned', 'Kế hoạch'],
+  ['done', 'Hoàn thành'],
+  ['delayed', 'Trễ'],
+];
+
+const STATUS_META = {
+  done: { label: 'Hoàn thành', color: '#3D8B5F', soft: '#E6F5EC' },
+  active: { label: 'Đang chạy', color: '#4A9A6A', soft: '#EAF6EE' },
+  planned: { label: 'Kế hoạch', color: '#6AA5BF', soft: '#E9F4FA' },
+  delayed: { label: 'Trễ hạn', color: '#C85D48', soft: '#FCECE8' },
+};
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function dayNumber(dateKey) {
+  return Number(dateKey?.slice(8, 10)) || 1;
+}
+
+function initials(name = '') {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  const pick = parts.length === 1 ? parts[0].slice(0, 2) : `${parts[0][0]}${parts[parts.length - 1][0]}`;
+  return pick.toUpperCase();
+}
+
+function normalizeStatus(bar, todayKey) {
+  const progress = bar.progress ?? 0;
+  if (bar.status === 'done' || progress >= 100) return 'done';
+  if (bar.status === 'fail') return 'delayed';
+  if (bar.endDate && bar.endDate < todayKey) return 'delayed';
+  if (bar.status === 'doing' || progress > 0) return 'active';
+  return 'planned';
+}
+
+function scheduleLevelLabel(level) {
+  if (level === 'task') return 'CÔNG VIỆC';
+  if (level === 'subtask') return 'SUB-TASK';
+  return 'CÔNG TRÌNH';
+}
+
+function packLanes(tasks) {
+  const lanes = [];
+  return tasks
+    .slice()
+    .sort((a, b) => a.start - b.start || b.dur - a.dur)
+    .map((task) => {
+      let lane = lanes.findIndex((end) => task.start > end);
+      if (lane < 0) {
+        lane = lanes.length;
+        lanes.push(0);
+      }
+      lanes[lane] = task.end;
+      return { ...task, lane };
+    });
+}
+
+function buildTasks({ gantt, teams, people, rangeStart, rangeEnd, days, todayKey }) {
+  const personById = new Map(people.map((p) => [p.id, p]));
+  const tasks = [];
+
+  for (const [teamIndex, team] of teams.entries()) {
+    const bars = gantt.barsByTeam[team] || [];
+    bars.forEach((bar, index) => {
+      if (bar.endDate < rangeStart || bar.startDate > rangeEnd) return;
+      const startKey = bar.startDate < rangeStart ? rangeStart : bar.startDate;
+      const endKey = bar.endDate > rangeEnd ? rangeEnd : bar.endDate;
+      const start = clamp(dayNumber(startKey), 1, days.length);
+      const end = clamp(dayNumber(endKey), 1, days.length);
+      const assignees = (bar.assigneeIds || [])
+        .map((id) => personById.get(id))
+        .filter(Boolean)
+        .slice(0, 4)
+        .map((person, pi) => ({
+          id: person.id,
+          name: person.name,
+          label: initials(person.name),
+          color: barColorForIndex(teamIndex + pi + 2),
+        }));
+
+      tasks.push({
+        id: `${team}-${bar.projectId}-${index}`,
+        nodeId: bar.projectId,
+        name: bar.projectName,
+        team,
+        start,
+        end,
+        dur: Math.max(1, end - start + 1),
+        progress: clamp(Math.round(bar.progress ?? 0), 0, 100),
+        status: normalizeStatus(bar, todayKey),
+        startAt: bar.startAt,
+        endAt: bar.endAt,
+        startDate: bar.startDate,
+        endDate: bar.endDate,
+        note: bar.note || '',
+        assignees,
+        color: barColorForIndex(teamIndex + index),
+      });
+    });
+  }
+
+  return tasks;
+}
+
+function buildGroups(viewMode, teams, tasks) {
+  if (viewMode === 'project') {
+    const map = new Map();
+    for (const task of tasks) {
+      const key = task.nodeId || task.name;
+      if (!map.has(key)) map.set(key, { id: key, title: task.name, sub: task.team, tasks: [] });
+      map.get(key).tasks.push(task);
+    }
+    return [...map.values()].map((group) => {
+      const packed = packLanes(group.tasks);
+      const height = Math.max(1, Math.max(...packed.map((t) => t.lane), 0) + 1) * LANE_H + GROUP_PAD * 2;
+      return { ...group, tasks: packed, height };
+    });
+  }
+
+  return teams.map((team) => {
+    const packed = packLanes(tasks.filter((task) => task.team === team));
+    const height = Math.max(1, Math.max(...packed.map((t) => t.lane), 0) + 1) * LANE_H + GROUP_PAD * 2;
+    return { id: team, title: team, sub: `${packed.length} mục`, tasks: packed, height };
+  });
+}
+
+function Ring({ value }) {
+  const pct = clamp(Number(value) || 0, 0, 100);
   return (
-    <div className="gantt-kpi-card">
-      <div className="gantt-kpi-label">{label}</div>
-      <div className="gantt-kpi-value-row">
-        <span className="gantt-kpi-value">{value}</span>
-        {suffix && <span className="gantt-kpi-suffix">{suffix}</span>}
-        {ring != null && (
-          <svg className="gantt-kpi-ring" viewBox="0 0 36 36" aria-hidden>
-            <circle className="gantt-kpi-ring-bg" cx="18" cy="18" r="15" />
-            <circle
-              className="gantt-kpi-ring-fill"
-              cx="18"
-              cy="18"
-              r="15"
-              strokeDasharray={`${ring * 94.2 / 100} 94.2`}
-            />
-          </svg>
-        )}
+    <svg className="cs-ring" viewBox="0 0 36 36" aria-hidden>
+      <circle className="cs-ring-bg" cx="18" cy="18" r="15" />
+      <circle className="cs-ring-fill" cx="18" cy="18" r="15" strokeDasharray={`${pct * 94.2 / 100} 94.2`} />
+    </svg>
+  );
+}
+
+function ScheduleStats({ kpis, totalLabel }) {
+  const cards = [
+    [totalLabel, kpis.total, null],
+    ['ĐANG THỰC HIỆN', kpis.inProgress, null],
+    ['HOÀN THÀNH', kpis.done, null],
+    ['TỶ LỆ HOÀN THÀNH', `${kpis.rate} %`, kpis.rate],
+  ];
+  return (
+    <div className="cs-stats">
+      {cards.map(([label, value, ring]) => (
+        <div className="cs-stat" key={label}>
+          <div className="cs-stat-label">{label}</div>
+          <div className="cs-stat-row">
+            <strong>{value}</strong>
+            {ring != null && <Ring value={ring} />}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScheduleBar({ task, onSelect }) {
+  const meta = STATUS_META[task.status] || STATUS_META.planned;
+  return (
+    <button
+      type="button"
+      className={`cs-bar is-${task.status}`}
+      style={{
+        left: (task.start - 1) * COL_W + 6,
+        top: GROUP_PAD + task.lane * LANE_H + 7,
+        width: Math.max(28, task.dur * COL_W - 12),
+        height: BAR_H,
+        '--cs-bar-color': meta.color,
+        '--cs-bar-soft': meta.soft,
+        '--cs-bar-progress': `${task.progress}%`,
+      }}
+      title={`${task.name}\n${formatScheduleRange(task.startAt, task.endAt) || `${task.startDate} -> ${task.endDate}`}\nTiến độ: ${task.progress}%`}
+      onClick={() => onSelect(task)}
+    >
+      <span className="cs-bar-fill" aria-hidden />
+      <span className="cs-bar-content">
+        {task.assignees.slice(0, 2).map((person) => (
+          <span key={person.id} className="cs-avatar" style={{ background: person.color }}>
+            {person.label}
+          </span>
+        ))}
+        <span className="cs-bar-title">{task.name}</span>
+        <strong>{task.progress}%</strong>
+      </span>
+    </button>
+  );
+}
+
+function ScheduleBoard({ days, todayDay, groups, selectedId, onSelect }) {
+  const timelineW = days.length * COL_W;
+  const totalH = groups.reduce((sum, group) => sum + group.height, 0);
+  let y = 0;
+
+  return (
+    <div className="cs-board">
+      <div className="cs-scroll">
+        <div className="cs-grid" style={{ width: LABEL_W + timelineW, minHeight: HEADER_H + totalH }}>
+          <div className="cs-corner" style={{ width: LABEL_W, height: HEADER_H }}>
+            <strong>Đội thợ</strong>
+          </div>
+          <div className="cs-days" style={{ left: LABEL_W, width: timelineW, height: HEADER_H }}>
+            <div className="cs-days-title">Ngày</div>
+            <div className="cs-day-row">
+              {days.map((day) => (
+                <div key={day} className={`cs-daycell ${dayNumber(day) === todayDay ? 'is-today' : ''}`}>
+                  {String(dayNumber(day)).padStart(2, '0')}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="cs-labels" style={{ top: HEADER_H, width: LABEL_W }}>
+            {groups.map((group) => {
+              const top = y;
+              y += group.height;
+              return (
+                <div key={group.id} className="cs-group-label" style={{ top, height: group.height }}>
+                  <strong>{group.title}</strong>
+                  <span>{group.sub}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="cs-time" style={{ left: LABEL_W, top: HEADER_H, width: timelineW, height: totalH }}>
+            {days.map((day, index) => (
+              <div key={day} className="cs-col" style={{ left: index * COL_W, width: COL_W }} />
+            ))}
+            {todayDay ? <div className="cs-todayline" style={{ left: (todayDay - 1) * COL_W + COL_W / 2 }} /> : null}
+            {(() => {
+              let top = 0;
+              return groups.flatMap((group) => {
+                const rowTop = top;
+                top += group.height;
+                return [
+                  <div key={`${group.id}-sep`} className="cs-row-sep" style={{ top: rowTop + group.height - 1 }} />,
+                  ...group.tasks.map((task) => (
+                    <div key={task.id} className={selectedId === task.id ? 'cs-task-wrap is-selected' : 'cs-task-wrap'} style={{ top: rowTop }}>
+                      <ScheduleBar task={task} onSelect={onSelect} />
+                    </div>
+                  )),
+                ];
+              });
+            })()}
+            {!groups.some((group) => group.tasks.length) && (
+              <div className="cs-empty">Chưa có lịch trong tháng này</div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function GanttProgressBar({ bar, span, color, lane = 0 }) {
-  const progress = bar.progress ?? 0;
-  const isDone = bar.status === 'done' || progress >= 100;
-  const isFail = bar.status === 'fail';
-  const showLabel = span.span >= 3;
-  const showPct = span.span >= 2;
-
+function ScheduleDrawer({ task, onClose }) {
+  if (!task) return null;
+  const meta = STATUS_META[task.status] || STATUS_META.planned;
   return (
-    <div
-      className={`gantt-chart-bar ${isDone ? 'done' : ''} ${isFail ? 'fail' : ''}`}
-      style={{
-        '--bar-start': span.start + 1,
-        '--bar-span': span.span,
-        '--bar-color': color,
-        '--bar-fill': `${isDone ? 100 : progress}%`,
-        '--bar-lane': lane,
-      }}
-      title={`${bar.projectName}\n${formatScheduleRange(bar.startAt, bar.endAt) || `${bar.startDate} → ${bar.endDate}`}\nTiến độ: ${progress}%`}
-    >
-      <div className="gantt-chart-bar-track" aria-hidden>
-        <div className="gantt-chart-bar-fill" />
-      </div>
-      {(showLabel || showPct) && (
-        <div className="gantt-chart-bar-label">
-          {showLabel && <span className="gantt-chart-bar-text">{bar.projectName}</span>}
-          {showPct && (
-            <span className="gantt-chart-bar-pct">{progress}%</span>
-          )}
+    <aside className="cs-drawer" aria-label="Chi tiết lịch">
+      <button type="button" className="cs-drawer-close" onClick={onClose} aria-label="Đóng">×</button>
+      <span className="cs-status" style={{ color: meta.color, background: meta.soft }}>{meta.label}</span>
+      <h3>{task.name}</h3>
+      <dl>
+        <div><dt>Team</dt><dd>{task.team}</dd></div>
+        <div><dt>Thời gian</dt><dd>{formatScheduleRange(task.startAt, task.endAt) || `${task.startDate} -> ${task.endDate}`}</dd></div>
+        <div><dt>Tiến độ</dt><dd>{task.progress}%</dd></div>
+        {task.note && <div><dt>Ghi chú</dt><dd>{task.note}</dd></div>}
+      </dl>
+      {!!task.assignees.length && (
+        <div className="cs-drawer-people">
+          {task.assignees.map((person) => (
+            <span key={person.id}><i style={{ background: person.color }}>{person.label}</i>{person.name}</span>
+          ))}
         </div>
       )}
-    </div>
+    </aside>
   );
 }
 
-export function TeamScheduleView({ products, people, embedded = false, showControls = true }) {
+export function TeamScheduleView({ products, people, embedded = false }) {
   const { t } = useI18n();
   const teams = useMemo(() => teamsFromPeople(people), [people]);
-  const [viewMode, setViewMode] = useState('month');
-  const [teamFilter, setTeamFilter] = useState('');
   const [anchorDate, setAnchorDate] = useState(() => new Date());
-
-  const kpis = useMemo(() => buildScheduleKpis(products), [products]);
-
-  const { rangeStart, rangeEnd, columns, timelineLabel } = useMemo(() => {
-    if (viewMode === 'year') {
-      const cols = yearMonthKeys(anchorDate);
-      return {
-        rangeStart: cols[0],
-        rangeEnd: `${anchorDate.getFullYear()}-12-31`,
-        columns: cols,
-        timelineLabel: yearLabel(anchorDate),
-      };
-    }
-    if (viewMode === 'week') {
-      const start = weekStartMonday(anchorDate);
-      const end = addDays(start, 6);
-      const days = [];
-      let cur = start;
-      while (cur <= end) {
-        days.push(cur);
-        cur = addDays(cur, 1);
-      }
-      return { rangeStart: start, rangeEnd: end, columns: days, timelineLabel: 'Tuần' };
-    }
-    const start = monthStart(anchorDate);
-    const end = monthEnd(anchorDate);
-    const days = [];
-    let cur = start;
-    while (cur <= end) {
-      days.push(cur);
-      cur = addDays(cur, 1);
-    }
-    return { rangeStart: start, rangeEnd: end, columns: days, timelineLabel: monthLabel(anchorDate) };
-  }, [viewMode, anchorDate]);
-
-  const gantt = useMemo(
-    () => buildGanttData(products, people, rangeStart, rangeEnd, teamFilter || null),
-    [products, people, rangeStart, rangeEnd, teamFilter],
-  );
-
-  const displayTeams = gantt.teams.length ? gantt.teams : teams;
-
-  const shiftRange = (delta) => {
-    setAnchorDate((d) => {
-      const next = new Date(d);
-      if (viewMode === 'year') next.setFullYear(next.getFullYear() + delta);
-      else if (viewMode === 'month') next.setMonth(next.getMonth() + delta);
-      else next.setDate(next.getDate() + delta * 7);
-      return next;
-    });
-  };
+  const [viewMode, setViewMode] = useState('team');
+  const [teamFilter, setTeamFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [scheduleLevel, setScheduleLevel] = useState('product');
+  const [selectedTask, setSelectedTask] = useState(null);
 
   const todayKey = currentLocalDateTimeForInput().date;
+  const rangeStart = useMemo(() => monthStart(anchorDate), [anchorDate]);
+  const rangeEnd = useMemo(() => monthEnd(anchorDate), [anchorDate]);
+  const days = useMemo(() => {
+    const out = [];
+    let cur = rangeStart;
+    while (cur <= rangeEnd) {
+      out.push(cur);
+      cur = addDays(cur, 1);
+    }
+    return out;
+  }, [rangeStart, rangeEnd]);
+  const selectedTodayDay = todayKey >= rangeStart && todayKey <= rangeEnd ? dayNumber(todayKey) : null;
+  const displayTeams = teamFilter ? [teamFilter] : teams;
+
+  const gantt = useMemo(
+    () => buildGanttData(products, people, rangeStart, rangeEnd, teamFilter || null, scheduleLevel),
+    [products, people, rangeStart, rangeEnd, teamFilter, scheduleLevel],
+  );
+
+  const tasks = useMemo(() => {
+    const raw = buildTasks({ gantt, teams: displayTeams, people, rangeStart, rangeEnd, days, todayKey });
+    return statusFilter === 'all' ? raw : raw.filter((task) => task.status === statusFilter);
+  }, [gantt, displayTeams, people, rangeStart, rangeEnd, days, todayKey, statusFilter]);
+
+  const groups = useMemo(() => buildGroups(viewMode, displayTeams, tasks), [viewMode, displayTeams, tasks]);
+  const kpis = useMemo(() => buildScheduleKpis(products, scheduleLevel), [products, scheduleLevel]);
+  const totalLabel = `TỔNG ${scheduleLevelLabel(scheduleLevel)}`;
+
+  const shiftMonth = (delta) => {
+    setAnchorDate((d) => {
+      const next = new Date(d);
+      next.setMonth(next.getMonth() + delta);
+      return next;
+    });
+    setSelectedTask(null);
+  };
 
   return (
     <div className={`screen has-nav gantt-screen ${embedded ? 'screen--embedded' : ''}`}>
@@ -145,126 +365,61 @@ export function TeamScheduleView({ products, people, embedded = false, showContr
         </div>
       )}
 
-      {showControls && (
-      <div className="gantt-toolbar">
-        <div className="gantt-toolbar-group gantt-toolbar-nav">
-          <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(-1)} aria-label="Trước">←</button>
-          <button type="button" className="gantt-tool-btn" onClick={() => setAnchorDate(new Date())}>Hôm nay</button>
-          <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(1)} aria-label="Sau">→</button>
-          <span className="gantt-period-label">{timelineLabel}</span>
-        </div>
-        <div className="gantt-toolbar-group gantt-view-switcher">
-          {['week', 'month', 'year'].map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`gantt-tool-btn ${viewMode === mode ? 'active' : ''}`}
-              onClick={() => setViewMode(mode)}
-            >
-              {mode === 'week' ? 'Tuần' : mode === 'month' ? 'Tháng' : 'Năm'}
-            </button>
-          ))}
-        </div>
-        <div className="gantt-toolbar-group gantt-toolbar-filter">
-          <select
-            className="gantt-team-filter"
-            value={teamFilter}
-            onChange={(e) => setTeamFilter(e.target.value)}
-          >
-            <option value="">Tất cả đội</option>
-            {teams.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-      </div>
-      )}
+      <section className="construction-schedule">
+        <div className="cs-shell">
+          <header className="cs-phead">
+            <div>
+              <div className="cs-code">{scheduleLevelLabel(scheduleLevel)}</div>
+              <h2>Kế hoạch công trình</h2>
+              <p>{monthLabel(anchorDate)} · {tasks.length} mục đang hiển thị</p>
+            </div>
+            <div className="cs-actions">
+              <div className="cs-monthnav">
+                <button type="button" onClick={() => shiftMonth(-1)} aria-label="Tháng trước">‹</button>
+                <strong>{monthLabel(anchorDate)}</strong>
+                <button type="button" onClick={() => shiftMonth(1)} aria-label="Tháng sau">›</button>
+              </div>
+              <button type="button" className="cs-today-btn" onClick={() => setAnchorDate(new Date())}>Hôm nay</button>
+            </div>
+          </header>
 
-      <div className="gantt-panel">
-        <h2 className="gantt-panel-title">KẾ HOẠCH CÔNG TRÌNH</h2>
+          <div className="cs-subbar">
+            <div className="cs-seg" role="group" aria-label="Kiểu gom lịch">
+              <button type="button" className={viewMode === 'team' ? 'active' : ''} onClick={() => setViewMode('team')}>Theo Team</button>
+              <button type="button" className={viewMode === 'project' ? 'active' : ''} onClick={() => setViewMode('project')}>Theo công trình</button>
+            </div>
+            <div className="cs-filters" role="group" aria-label="Lọc cấp kế hoạch">
+              {LEVEL_OPTIONS.map(([value, label]) => (
+                <button key={value} type="button" className={scheduleLevel === value ? 'active' : ''} onClick={() => setScheduleLevel(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="cs-filters" role="group" aria-label="Lọc trạng thái">
+              {STATUS_OPTIONS.map(([value, label]) => (
+                <button key={value} type="button" className={statusFilter === value ? 'active' : ''} onClick={() => setStatusFilter(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <select className="cs-team-select" value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
+              <option value="">Tất cả Team</option>
+              {teams.map((team) => <option key={team} value={team}>{team}</option>)}
+            </select>
+          </div>
 
-        <div className="gantt-table-wrap">
-          <table className="gantt-table" style={{ '--gantt-cols': columns.length }}>
-            <thead>
-              <tr>
-                <th className="gantt-th-rowhead">Đội thợ</th>
-                <th className="gantt-th-timeline" colSpan={columns.length}>
-                  {viewMode === 'year' ? 'Tháng' : viewMode === 'month' ? 'Ngày' : 'Tuần'}
-                </th>
-              </tr>
-              <tr>
-                <th className="gantt-th-rowhead gantt-th-sub" />
-                {columns.map((col) => {
-                  const isToday = col === todayKey
-                    || (viewMode === 'year' && col.slice(0, 7) === todayKey.slice(0, 7));
-                  return (
-                    <th key={col} className={`gantt-th-col ${isToday ? 'today' : ''}`}>
-                      {formatColumnLabel(col, viewMode)}
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {displayTeams.map((team, ti) => {
-                const bars = gantt.barsByTeam[team] || [];
-                const colCount = columns.length;
-                const visibleBarCount = bars.reduce((count, bar) => {
-                  const span = viewMode === 'year'
-                    ? barSpansMonths(bar, columns)
-                    : barSpansDays(bar, columns);
-                  return span ? count + 1 : count;
-                }, 0);
-                let visibleBarIndex = 0;
-                return (
-                  <tr key={team} className="gantt-tr">
-                    <td className="gantt-td-team">{team}</td>
-                    <td className="gantt-td-chart" colSpan={colCount}>
-                      <div
-                        className="gantt-chart-row"
-                        style={{
-                          '--gantt-cols': colCount,
-                          '--gantt-row-height': `${Math.max(visibleBarCount, 1) * 46 + 16}px`,
-                        }}
-                      >
-                        {columns.map((col) => (
-                          <div key={col} className="gantt-chart-cell" />
-                        ))}
-                        {bars.map((bar, bi) => {
-                          const span = viewMode === 'year'
-                            ? barSpansMonths(bar, columns)
-                            : barSpansDays(bar, columns);
-                          if (!span) return null;
-                          const lane = visibleBarIndex;
-                          visibleBarIndex += 1;
-                          const color = barColorForIndex(ti + lane);
-                          return (
-                            <GanttProgressBar
-                              key={`${bar.projectId}-${bi}`}
-                              bar={bar}
-                              span={span}
-                              color={color}
-                              lane={lane}
-                            />
-                          );
-                        })}
-                        {visibleBarCount === 0 && (
-                          <span className="gantt-empty-row">Trống lịch</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <ScheduleBoard
+            days={days}
+            todayDay={selectedTodayDay}
+            groups={groups}
+            selectedId={selectedTask?.id}
+            onSelect={setSelectedTask}
+          />
         </div>
-      </div>
 
-      <div className="gantt-kpi-grid">
-        <KpiCard label="TỔNG CÔNG TRÌNH" value={kpis.total} />
-        <KpiCard label="ĐANG THỰC HIỆN" value={kpis.inProgress} />
-        <KpiCard label="HOÀN THÀNH" value={kpis.done} />
-        <KpiCard label="TỶ LỆ HOÀN THÀNH" value={kpis.rate} suffix="%" ring={kpis.rate} />
-      </div>
+        <ScheduleStats kpis={kpis} totalLabel={totalLabel} />
+        <ScheduleDrawer task={selectedTask} onClose={() => setSelectedTask(null)} />
+      </section>
     </div>
   );
 }
