@@ -22,6 +22,7 @@ import {
   saveProjectTeamSchedules,
   saveProjectStartedAt,
   saveProjectGoodsPercent,
+  saveTaskGoodsPercent,
   authenticatePersonLogin,
   canAddChildren,
   addChildLabels,
@@ -77,7 +78,8 @@ import {
   writeStoredAccessRole,
 } from './lib/permissions.js';
 import { checkoutSession } from './lib/attendance.js';
-import { newTeamScheduleId } from './lib/siteLocation.js';
+import { DEFAULT_RADIUS_M, newTeamScheduleId } from './lib/siteLocation.js';
+import { getCurrentPosition, formatCoords } from './lib/geolocation.js';
 import { teamsFromPeople } from './lib/teams.js';
 import { AttendancePanel } from './components/AttendancePanel.jsx';
 import { SiteLocationSheet, TeamScheduleSheet, ProjectStartedAtSheet } from './components/FieldOpsSheets.jsx';
@@ -131,6 +133,14 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 const CURRENT_USER_STORAGE_KEY = 'taskApp.currentUserId';
+const DEFAULT_EVALUATION_TYPES = [
+  'Chất lượng',
+  'Tiến độ',
+  'An toàn',
+  'Nhân sự',
+  'Vật tư',
+  'Khách hàng',
+];
 
 function readStoredCurrentUserId() {
   try {
@@ -386,13 +396,101 @@ function totalWorkMinutesFor(node) {
   }, 0);
 }
 
+function uniqueTextOptions(values) {
+  const seen = new Set();
+  const out = [];
+  values.forEach((value) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    const key = text.toLocaleLowerCase('vi-VN');
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(text);
+  });
+  return out;
+}
+
+function EvaluationTypeCombobox({ value, onChange, options = [] }) {
+  const [open, setOpen] = useState(false);
+  const suggestions = useMemo(() => {
+    const q = value.trim().toLocaleLowerCase('vi-VN');
+    const list = uniqueTextOptions([...options, ...DEFAULT_EVALUATION_TYPES]);
+    if (!q) return list.slice(0, 8);
+    return list.filter((item) => item.toLocaleLowerCase('vi-VN').includes(q)).slice(0, 8);
+  }, [options, value]);
+  const exactMatch = suggestions.some((item) => item.toLocaleLowerCase('vi-VN') === value.trim().toLocaleLowerCase('vi-VN'));
+
+  return (
+    <div className="combo-field">
+      <div className="combo-input-wrap">
+        <input
+          id="work-evaluation-type"
+          className="field-input"
+          type="text"
+          value={value}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setOpen(false);
+          }}
+          placeholder="Chọn hoặc gõ loại đánh giá..."
+          autoComplete="off"
+        />
+        <button
+          type="button"
+          className="combo-toggle-btn"
+          aria-label="Mở gợi ý loại đánh giá"
+          onClick={() => setOpen((next) => !next)}
+        >
+          <Icon.chev/>
+        </button>
+      </div>
+      {open && (
+        <div className="combo-menu">
+          {suggestions.map((item) => (
+            <button
+              key={item}
+              type="button"
+              className="combo-option"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(item);
+                setOpen(false);
+              }}
+            >
+              {item}
+            </button>
+          ))}
+          {value.trim() && !exactMatch && (
+            <button
+              type="button"
+              className="combo-option combo-option--new"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setOpen(false)}
+            >
+              Dùng loại mới: {value.trim()}
+            </button>
+          )}
+          {!suggestions.length && !value.trim() && (
+            <div className="combo-empty">Chưa có gợi ý.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DesktopSubtaskPanel({
   title, items, activeId, selectedIds, allSelected, selectedCount,
   onToggleSelected, onSelectAll, onClearSelected, onPrintSelected,
-  onOpen, onOpenActions, onComplete, onAddSubtask,
+  onOpen, onOpenActions, onComplete, onAddSubtask, onEditGoodsPercent,
 }) {
   const { t } = useI18n();
   const showBulkActions = items.length > 0;
+  const showPanelActions = showBulkActions || onAddSubtask;
   return (
     <div className="desktop-subtask-panel">
       <div className="section">
@@ -400,7 +498,7 @@ function DesktopSubtaskPanel({
           <div className="section-title">
             {title} {items.length > 0 && `· ${items.length}`}
           </div>
-          {(showBulkActions || onAddSubtask) && (
+          {showPanelActions && (
             <div className="desktop-subtask-panel-actions">
               {showBulkActions && (
                 <>
@@ -461,6 +559,7 @@ function DesktopSubtaskPanel({
                   onOpen={() => onOpen?.(item)}
                   onOpenActions={onOpenActions}
                   onComplete={onComplete}
+                  onEditGoodsPercent={onEditGoodsPercent}
                 />
               </div>
             );
@@ -512,7 +611,7 @@ function NodeDetail({
   node, depth, parent, t = {}, onOpenChild, onBack, onOpenPhoto, onViewPhoto, onEditNote, onEditDeadline,
   onOpenAssignees, onCycleStatus, onAddChild, onAddFeature, onOpenActions, onChildActions,
   onPastePhotos, onOpenWorkAction, onCompleteWorkAction, onSendDiscussion, onDeletePhoto, onOpenDocLink, onDeleteDocLink, onCompleteNode,
-  onEditStartedAt,
+  onEditStartedAt, onEditGoodsPercent,
   embedded = false, showBack = true, hideChildrenList = false,
   projectNode = null, subtaskSupported = true, docLinksSupported = true, projectDocLinksSupported = true,
   subtaskPanel = null,
@@ -535,6 +634,7 @@ function NodeDetail({
     evaluation: translate('workKindEvaluation'),
     discussion: translate('workKindDiscussion'),
   }), [translate]);
+  const nodeTable = node?._source?.table;
   const canAddChild = listParent && typeof onAddChild === 'function';
   const showSiblingList = listParent && listParent.id !== node.id;
   const canPastePhoto = node?._source?.table === 'tasks' && typeof onPastePhotos === 'function';
@@ -542,7 +642,6 @@ function NodeDetail({
   const canCompleteNode = typeof onCompleteNode === 'function';
   const showCompleteNodeBtn = canCompleteNode && !node.completedAt;
   const isNodeDone = node.status === 'done' || Boolean(node.completedAt);
-  const nodeTable = node?._source?.table;
   const isProject = nodeTable === 'projects';
   const isFeature = nodeTable === 'features';
   const showInlineProjectOps = false;
@@ -564,9 +663,12 @@ function NodeDetail({
     if (isDiscussionAction(action)) return null;
     if (isSimpleNoteAction(action) || isEvaluationAction(action)) {
       const text = (action.note || action.title || '').replace(/\r\n/g, '\n');
+      const label = isEvaluationAction(action) && action.evaluationType
+        ? action.evaluationType
+        : '';
       return (
         <div key={action.id} className="work-note-card">
-          <NoteBlock text={text} onEdit={() => onOpenWorkAction(action)} />
+          <NoteBlock text={text} label={label} onEdit={() => onOpenWorkAction(action)} />
         </div>
       );
     }
@@ -994,9 +1096,13 @@ function NodeDetail({
                   {childrenLabel}{hasChildren ? ` · ${childNodes.length}` : ''}
                 </div>
                 {canAddChild && hasChildren && (
-                  <button type="button" className="section-action" onClick={onAddChild}>
-                    + Thêm {addChildLabel}
-                  </button>
+                  <div className="section-actions">
+                    {canAddChild && hasChildren && (
+                      <button type="button" className="section-action" onClick={onAddChild}>
+                        + Thêm {addChildLabel}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1026,6 +1132,7 @@ function NodeDetail({
                       onOpen={() => onOpenChild(child)}
                       onOpenActions={onChildActions}
                       onComplete={onCompleteNode}
+                      onEditGoodsPercent={onEditGoodsPercent}
                     />
                   ))}
                 </div>
@@ -1681,7 +1788,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
 }
 
 // ─── Bottom Nav ───────────────────────────────────────────────────
-function SubtasksDashboard({ products, onOpenNode }) {
+function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [assigneeId, setAssigneeId] = useState('all');
@@ -1823,8 +1930,10 @@ function SubtasksDashboard({ products, onOpenNode }) {
                 {filtered.map((it) => {
                   const assignees = (it.node.assignees || []).map((id) => PEOPLE.find((p) => p.id === id)?.name || id).join(', ');
                   const mins = totalWorkMinutesFor(it.node);
-                  const taskProgress = taskProgressLabel(it, allItems);
                   const priority = priorityForWorkItem(it.node);
+                  const subtaskPct = it.node.goodsPercent !== null && it.node.goodsPercent !== undefined
+                    ? Math.max(0, Math.min(100, Math.round(Number(it.node.goodsPercent))))
+                    : (it.node.status === 'done' || it.node.completedAt ? 100 : 0);
                   return (
                     <tr key={it.node.id} className="subtasks-card-row" onClick={() => onOpenNode(it.node.id)}>
                       <td className="subtasks-card-project" data-label="Dự án"><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
@@ -1836,9 +1945,21 @@ function SubtasksDashboard({ products, onOpenNode }) {
                       <td className="subtasks-card-deadline" data-label="Deadline"><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
                       <td className="subtasks-card-progress" data-label="Tiến độ">
                         <div className="task-progress-cell">
-                          <div className="task-progress-text">{taskProgress.pct}%</div>
-                          <div className="task-progress-track"><span style={{ width: `${taskProgress.pct}%` }} /></div>
-                          <div className="subtasks-table-sub">{taskProgress.done}/{taskProgress.total} sub task xong</div>
+                          <div className="task-progress-text">{subtaskPct}%</div>
+                          <div className="task-progress-track"><span style={{ width: `${subtaskPct}%` }} /></div>
+                          <div className="subtasks-table-sub">Riêng subtask này</div>
+                          {typeof onEditGoodsPercent === 'function' && (
+                            <button
+                              type="button"
+                              className="subtasks-percent-btn"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onEditGoodsPercent(it.node);
+                              }}
+                            >
+                              <Icon.edit/> Tỉ lệ hoàn thành
+                            </button>
+                          )}
                         </div>
                       </td>
                       <td className="subtasks-card-time" data-label="Thời gian">{formatDurationMinutes(mins) || '0 phút'}</td>
@@ -1905,12 +2026,19 @@ function FilterPill({ children, active, onClick, tone }) {
 }
 
 // ─── Product Card (richer top-level card) ─────────────────────────
-function ProductCard({ product, onOpen, onOpenActions, onComplete, onEditGoodsPercent, selected = false }) {
+function ProductCard({
+  product,
+  onOpen,
+  onOpenActions,
+  onComplete,
+  onCaptureLocation,
+  locationSaving = false,
+  selected = false,
+}) {
   const { t } = useI18n();
   const stats = aggregate(product);
   const taskPct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
-  const manualPct = product.goodsPercent !== null && product.goodsPercent !== undefined ? Number(product.goodsPercent) : null;
-  const pct = Number.isFinite(manualPct) ? Math.max(0, Math.min(100, Math.round(manualPct))) : taskPct;
+  const pct = taskPct;
   const tone = deadlineTone(product.deadline, product.status);
   const modules = (product.children || []).length;
   return (
@@ -1940,9 +2068,6 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, onEditGoodsPe
       </div>
       <div className="pc-meta">
         <StatusChip status={product.status}/>
-        {product.goodsPercent !== null && product.goodsPercent !== undefined && (
-          <span className="pc-goods-percent">{product.goodsPercent}% hoàn thành</span>
-        )}
         <span className={`chip deadline ${tone !== 'neutral' ? tone : ''}`}>
           <Icon.cal/>{formatDeadline(product.deadline)}
         </span>
@@ -1971,7 +2096,7 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, onEditGoodsPe
           )}
         </div>
         <div className="pc-progress-row">
-          <ProgressBar stats={stats} percent={manualPct}/>
+          <ProgressBar stats={stats}/>
           <div className="pct">{pct}%</div>
         </div>
         {typeof onComplete === 'function' && !product.completedAt && (
@@ -1987,17 +2112,18 @@ function ProductCard({ product, onOpen, onOpenActions, onComplete, onEditGoodsPe
             {t('workComplete')}
           </button>
         )}
-        {typeof onEditGoodsPercent === 'function' && (
+        {typeof onCaptureLocation === 'function' && (
           <button
             type="button"
-            className="product-card-percent-btn"
+            className="product-card-percent-btn product-card-location-btn"
+            disabled={locationSaving}
             onClick={(e) => {
               e.stopPropagation();
-              onEditGoodsPercent(product);
+              onCaptureLocation(product);
             }}
           >
-            <Icon.edit/>
-            Tỉ lệ hoàn thành
+            <Icon.user/>
+            {locationSaving ? 'Đang lấy GPS...' : product.siteLocation ? 'Cập nhật vị trí' : 'Vị trí'}
           </button>
         )}
       </div>
@@ -2015,7 +2141,7 @@ function productMatchesSearch(product, query) {
 
 function ProductsHome({
   products, onOpen, onOpenActions, onComplete, onAddProduct, onDeleteSelected,
-  onEditGoodsPercent,
+  onCaptureLocation, locationSavingId = null,
   panel = false, currentUserId = null, canBulkDelete = false,
 }) {
   const { t, locale } = useI18n();
@@ -2263,7 +2389,8 @@ function ProductsHome({
               }}
               onOpenActions={onOpenActions}
               onComplete={onComplete}
-              onEditGoodsPercent={onEditGoodsPercent}
+              onCaptureLocation={onCaptureLocation}
+              locationSaving={locationSavingId === p.id}
               selected={showBulkToolbar && selectedProductIds.has(p.id)}
             />
           ))}
@@ -2275,6 +2402,335 @@ function ProductsHome({
           <Icon.plus/> {t('addProject')}
         </button>
       )}
+    </div>
+  );
+}
+
+function collectProjectDashboardRows(project) {
+  const features = project?.children || [];
+  const tasks = [];
+  const subtasks = [];
+  const attention = [];
+  const assignees = new Set(project?.assignees || []);
+  let checklistMinutes = 0;
+
+  function walk(node, feature = null, parentTask = null) {
+    (node.assignees || []).forEach((id) => assignees.add(id));
+    checklistMinutes += totalWorkMinutesFor(node);
+    const table = node?._source?.table;
+    const isSubtask = table === 'tasks' && Boolean(node._source?.parentTaskId);
+    if (table === 'tasks' && !isSubtask) tasks.push({ node, feature });
+    if (isSubtask) subtasks.push({ node, feature, parentTask });
+
+    const tone = deadlineTone(node.deadline, node.status);
+    if (node.status === 'fail' || tone === 'overdue' || tone === 'urgent') {
+      attention.push({ node, feature, parentTask, tone });
+    }
+
+    (node.children || []).forEach((child) => {
+      const nextFeature = child?._source?.table === 'features' ? child : feature;
+      const nextParentTask = child?._source?.table === 'tasks' && !child?._source?.parentTaskId ? child : parentTask;
+      walk(child, nextFeature, nextParentTask);
+    });
+  }
+
+  (project?.children || []).forEach((feature) => walk(feature, feature, null));
+
+  return {
+    features,
+    tasks,
+    subtasks,
+    attention,
+    assignees: [...assignees].filter(Boolean),
+    checklistMinutes,
+  };
+}
+
+function ProjectKpiChart({ card }) {
+  if (card.chart === 'donut') {
+    return (
+      <div className="project-kpi-chart project-kpi-donut" style={{ '--value': `${card.percent || 0}%` }}>
+        <span>{card.percent || 0}%</span>
+      </div>
+    );
+  }
+
+  if (card.chart === 'bars') {
+    const bars = card.bars?.length ? card.bars : [0, 0, 0, 0];
+    return (
+      <div className="project-kpi-chart project-kpi-bars">
+        {bars.map((height, index) => (
+          <i key={index} style={{ height: `${Math.max(8, Math.min(100, height || 0))}%` }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (card.chart === 'stack') {
+    const max = Math.max(card.max || 1, 1);
+    return (
+      <div className="project-kpi-chart project-kpi-stack">
+        {(card.values || []).map((value, index) => (
+          <i key={index} style={{ width: `${Math.max(8, Math.min(100, (value / max) * 100))}%` }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (card.chart === 'dots') {
+    return (
+      <div className="project-kpi-chart project-kpi-dots">
+        {Array.from({ length: Math.max(1, card.count || 0) }).map((_, index) => (
+          <i key={index} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="project-kpi-chart project-kpi-meter">
+      <span style={{ width: `${Math.max(0, Math.min(100, card.percent || 0))}%` }} />
+    </div>
+  );
+}
+
+function ProjectDesktopDashboard({
+  project,
+  onOpenNode,
+  onOpenActions,
+  onAddFeature,
+  onOpenSiteSettings,
+  onOpenTeamSchedule,
+}) {
+  const stats = aggregate(project);
+  const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+  const data = useMemo(() => collectProjectDashboardRows(project), [project]);
+  const peopleMap = useMemo(() => new Map(PEOPLE.map((person) => [person.id, person])), []);
+  const attendanceSessions = project.attendanceSessions || [];
+  const attendanceMinutes = attendanceSessions.reduce((sum, session) => (
+    sum + (session.checkOutAt ? (new Date(session.checkOutAt) - new Date(session.checkInAt)) / 60000 : 0)
+  ), 0);
+  const doneSubtasks = data.subtasks.filter(({ node }) => node.status === 'done' || node.completedAt).length;
+  const manualSubtaskPct = data.subtasks.filter(({ node }) => node.goodsPercent !== null && node.goodsPercent !== undefined);
+  const attentionRows = data.attention.slice(0, 8);
+  const issueCount = stats.fail || data.attention.length;
+  const checklistMinutes = Math.round(data.checklistMinutes);
+  const attendanceMinuteTotal = Math.round(attendanceMinutes);
+  const featureBars = data.features.slice(0, 6).map((feature) => {
+    const featureStats = aggregate(feature);
+    return featureStats.total ? Math.round((featureStats.done / featureStats.total) * 100) : 0;
+  });
+  const attendanceBars = attendanceSessions.slice(-6).map((session) => {
+    const minutes = session.checkOutAt ? (new Date(session.checkOutAt) - new Date(session.checkInAt)) / 60000 : 0;
+    return Math.round(Math.min(100, Math.max(8, (minutes / 480) * 100)));
+  });
+  const kpiCards = [
+    {
+      label: 'Tiến độ',
+      value: `${pct}%`,
+      sub: `${stats.done}/${stats.total} mục xong`,
+      tone: 'green',
+      chart: 'donut',
+      percent: pct,
+    },
+    {
+      label: 'Hạng mục',
+      value: data.features.length,
+      sub: 'module trong dự án',
+      tone: 'blue',
+      chart: 'bars',
+      bars: featureBars,
+    },
+    {
+      label: 'Công việc',
+      value: data.tasks.length,
+      sub: `${data.subtasks.length} subtask`,
+      tone: 'ink',
+      chart: 'stack',
+      values: [data.tasks.length, data.subtasks.length],
+      max: Math.max(data.tasks.length, data.subtasks.length, 1),
+    },
+    {
+      label: 'Subtask xong',
+      value: `${doneSubtasks}/${data.subtasks.length}`,
+      sub: `${manualSubtaskPct.length} thẻ có % riêng`,
+      tone: 'green',
+      chart: 'donut',
+      percent: data.subtasks.length ? Math.round((doneSubtasks / data.subtasks.length) * 100) : 0,
+    },
+    {
+      label: 'Đang vướng',
+      value: issueCount,
+      sub: 'lỗi hoặc trễ hạn',
+      tone: 'red',
+      chart: 'bars',
+      bars: [stats.fail, data.attention.length].map((value) => (
+        issueCount ? Math.round((value / issueCount) * 100) : 0
+      )),
+    },
+    {
+      label: 'Nhân sự',
+      value: data.assignees.length,
+      sub: 'người liên quan',
+      tone: 'purple',
+      chart: 'dots',
+      count: Math.min(data.assignees.length, 8),
+    },
+    {
+      label: 'Checklist',
+      value: formatDurationMinutes(checklistMinutes) || '0 phút',
+      sub: 'thời gian thao tác',
+      tone: 'amber',
+      chart: 'meter',
+      percent: Math.min(100, Math.round((checklistMinutes / 480) * 100)),
+    },
+    {
+      label: 'Chấm công GPS',
+      value: formatDurationMinutes(attendanceMinuteTotal) || '0 phút',
+      sub: `${attendanceSessions.length} ca`,
+      tone: 'blue',
+      chart: attendanceBars.length ? 'bars' : 'meter',
+      bars: attendanceBars,
+      percent: Math.min(100, Math.round((attendanceMinuteTotal / 480) * 100)),
+    },
+  ];
+
+  return (
+    <div className="project-dashboard">
+      <div className="project-dashboard-hero">
+        <div className="project-dashboard-title-block">
+          <div className="project-dashboard-eyebrow">Dashboard dự án</div>
+          <h1>{project.name}</h1>
+          <div className="project-dashboard-meta">
+            {project.customerName && <span>{project.customerName}</span>}
+            <StatusChip status={project.status}/>
+            <DeadlineChip iso={project.deadline} status={project.status} emptyLabel="Chưa có deadline"/>
+          </div>
+        </div>
+        <div className="project-dashboard-actions">
+          {typeof onOpenActions === 'function' && (
+            <button type="button" className="btn btn-secondary" onClick={() => onOpenActions(project)}>
+              <Icon.more/> Tùy chọn
+            </button>
+          )}
+          {typeof onOpenSiteSettings === 'function' && (
+            <button type="button" className="btn btn-secondary" onClick={onOpenSiteSettings}>
+              <Icon.user/> GPS
+            </button>
+          )}
+          {typeof onOpenTeamSchedule === 'function' && (
+            <button type="button" className="btn btn-secondary" onClick={() => onOpenTeamSchedule(null)}>
+              <Icon.cal/> Lịch đội
+            </button>
+          )}
+          {typeof onAddFeature === 'function' && (
+            <button type="button" className="btn btn-primary" onClick={() => onAddFeature(project)}>
+              <Icon.plus/> Thêm hạng mục
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="project-dashboard-grid">
+        {[
+          ['Tiến độ', `${pct}%`, `${stats.done}/${stats.total} mục xong`],
+          ['Hạng mục', data.features.length, 'module trong dự án'],
+          ['Công việc', data.tasks.length, `${data.subtasks.length} subtask`],
+          ['Subtask xong', `${doneSubtasks}/${data.subtasks.length}`, `${manualSubtaskPct.length} thẻ có % riêng`],
+          ['Đang vướng', stats.fail || data.attention.length, 'lỗi hoặc trễ hạn'],
+          ['Nhân sự', data.assignees.length, 'người liên quan'],
+          ['Checklist', formatDurationMinutes(Math.round(data.checklistMinutes)) || '0 phút', 'thời gian thao tác'],
+          ['Chấm công GPS', formatDurationMinutes(Math.round(attendanceMinutes)) || '0 phút', `${(project.attendanceSessions || []).length} ca`],
+        ].map(([label, value, sub]) => (
+          <div key={label} className="project-dashboard-card">
+            <div className="project-dashboard-card-label">{label}</div>
+            <div className="project-dashboard-card-value">{value}</div>
+            <div className="project-dashboard-card-sub">{sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="project-dashboard-main">
+        <section className="project-dashboard-section project-dashboard-section--wide">
+          <div className="project-dashboard-section-head">
+            <div>
+              <h2>Tiến độ theo hạng mục</h2>
+              <p>{data.features.length} hạng mục trong dự án</p>
+            </div>
+          </div>
+          <div className="project-dashboard-feature-list">
+            {data.features.length === 0 ? (
+              <div className="empty">Chưa có hạng mục.</div>
+            ) : data.features.map((feature) => {
+              const featureStats = aggregate(feature);
+              const featurePct = featureStats.total ? Math.round((featureStats.done / featureStats.total) * 100) : 0;
+              const featureSubtasks = collectSubtasksForFeature(feature);
+              return (
+                <button
+                  key={feature.id}
+                  type="button"
+                  className="project-dashboard-feature-row"
+                  onClick={() => onOpenNode(feature)}
+                >
+                  <div className="project-dashboard-feature-main">
+                    <span>{feature.name}</span>
+                    <small>{(feature.children || []).length} công việc · {featureSubtasks.length} subtask</small>
+                  </div>
+                  <div className="project-dashboard-feature-progress">
+                    <div className="project-dashboard-progress-track"><span style={{ width: `${featurePct}%` }} /></div>
+                    <b>{featurePct}%</b>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="project-dashboard-section">
+          <div className="project-dashboard-section-head">
+            <div>
+              <h2>Cần chú ý</h2>
+              <p>Lỗi, trễ hạn hoặc sắp tới hạn</p>
+            </div>
+          </div>
+          <div className="project-dashboard-attention-list">
+            {attentionRows.length === 0 ? (
+              <div className="empty">Không có mục cần chú ý.</div>
+            ) : attentionRows.map(({ node, feature, parentTask, tone }) => (
+              <button
+                key={node.id}
+                type="button"
+                className="project-dashboard-attention-row"
+                onClick={() => onOpenNode(node)}
+              >
+                <div>
+                  <span>{node.name}</span>
+                  <small>{[feature?.name, parentTask?.name].filter(Boolean).join(' · ') || 'Dự án'}</small>
+                </div>
+                <span className={`project-dashboard-tone project-dashboard-tone--${tone || node.status}`}>
+                  {node.status === 'fail' ? 'Vướng' : formatDeadline(node.deadline)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="project-dashboard-section">
+          <div className="project-dashboard-section-head">
+            <div>
+              <h2>Nhân sự</h2>
+              <p>{data.assignees.length} người được gán</p>
+            </div>
+          </div>
+          <div className="project-dashboard-people">
+            {data.assignees.length > 0 && <Avatars ids={data.assignees} size="md" max={8} alwaysShow/>}
+            {data.assignees.slice(0, 8).map((id) => (
+              <span key={id}>{peopleMap.get(id)?.name || id}</span>
+            ))}
+            {data.assignees.length === 0 && <div className="empty">Chưa gán nhân sự.</div>}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -2432,7 +2888,8 @@ function DesktopProductsSplit({
             onOpen={openProduct}
             onOpenActions={openNodeActions}
             onComplete={handleCompleteNode}
-            onEditGoodsPercent={detailProps.onEditGoodsPercent}
+            onCaptureLocation={detailProps.onCaptureLocation}
+            locationSavingId={detailProps.locationSavingId}
             panel
             currentUserId={currentUserId}
           />
@@ -2511,6 +2968,7 @@ function DesktopProductsSplit({
                         onOpen={() => openChild(child)}
                         onOpenActions={openNodeActions}
                         onComplete={onCompleteNode}
+                        onEditGoodsPercent={detailProps.onEditGoodsPercent}
                         active={child.id === activeId}
                       />
                     </div>
@@ -2529,7 +2987,16 @@ function DesktopProductsSplit({
         )}
       </aside>
       <main className="desktop-split-main">
-        {currentNode ? (
+        {currentNode?._source?.table === 'projects' ? (
+          <ProjectDesktopDashboard
+            project={currentNode}
+            onOpenNode={openChild}
+            onOpenActions={openNodeActions}
+            onAddFeature={onAddFeature}
+            onOpenSiteSettings={detailProps.onOpenSiteSettings}
+            onOpenTeamSchedule={detailProps.onOpenTeamSchedule}
+          />
+        ) : currentNode ? (
           <NodeDetail
             node={currentNode}
             depth={depth}
@@ -2561,6 +3028,7 @@ function DesktopProductsSplit({
                 onOpen={openChild}
                 onOpenActions={openNodeActions}
                 onComplete={onCompleteNode}
+                onEditGoodsPercent={detailProps.onEditGoodsPercent}
                 onAddSubtask={
                   currentNode?._source?.table === 'tasks' && !currentNode?._source?.parentTaskId
                     ? () => onAddChild(currentNode)
@@ -2612,7 +3080,7 @@ function ActionDateTimeFields({
 }
 
 function WorkActionSheet({
-  action, defaultKind = 'note', onClose, onSave, onComplete, onDelete, canDelete = true,
+  action, defaultKind = 'note', evaluationTypeOptions = [], onClose, onSave, onComplete, onDelete, canDelete = true,
 }) {
   const { t } = useI18n();
   const nowFields = () => currentLocalDateTimeForInput();
@@ -2624,6 +3092,7 @@ function WorkActionSheet({
   const isTextOnlyKind = kind === 'note' || kind === 'evaluation';
   const [title, setTitle] = useState(action?.title || '');
   const [note, setNote] = useState(action?.note || '');
+  const [evaluationType, setEvaluationType] = useState(action?.evaluationType || '');
   const [noteContent, setNoteContent] = useState(
     isSimpleNoteAction(action) || ['note', 'evaluation'].includes(normalizeWorkActionKind(action?.kind || defaultKind))
       ? (action?.note || action?.title || '')
@@ -2663,6 +3132,7 @@ function WorkActionSheet({
       kind: normalizeWorkActionKind(kind),
       title: content.split('\n')[0].slice(0, 120),
       note: content,
+      ...(kind === 'evaluation' && evaluationType.trim() ? { evaluationType: evaluationType.trim() } : {}),
       startedAt: action?.startedAt || iso,
       endedAt: iso,
       status: 'completed',
@@ -2777,18 +3247,30 @@ function WorkActionSheet({
         </div>
 
         {isTextOnlyKind ? (
-          <div className="field">
-            <label className="field-label" htmlFor="work-note-content">{t('workNoteContent')}</label>
-            <textarea
-              id="work-note-content"
-              className="field-input"
-              rows={6}
-              value={noteContent}
-              onChange={(e) => setNoteContent(e.target.value)}
-              placeholder={kindPlaceholders[kind]}
-              autoFocus
-            />
-          </div>
+          <>
+            {kind === 'evaluation' && (
+              <div className="field">
+                <label className="field-label" htmlFor="work-evaluation-type">Loại Đánh giá</label>
+                <EvaluationTypeCombobox
+                  value={evaluationType}
+                  onChange={setEvaluationType}
+                  options={evaluationTypeOptions}
+                />
+              </div>
+            )}
+            <div className="field">
+              <label className="field-label" htmlFor="work-note-content">{t('workNoteContent')}</label>
+              <textarea
+                id="work-note-content"
+                className="field-input"
+                rows={6}
+                value={noteContent}
+                onChange={(e) => setNoteContent(e.target.value)}
+                placeholder={kindPlaceholders[kind]}
+                autoFocus={kind !== 'evaluation'}
+              />
+            </div>
+          </>
         ) : (
           <>
             <div className="field">
@@ -3596,15 +4078,35 @@ function AddProductSheet({ onClose, onSave }) {
   const [customerName, setCustomerName] = useState('');
   const [deadlineDate, setDeadlineDate] = useState('');
   const [deadlineTime, setDeadlineTime] = useState('');
+  const [siteLocation, setSiteLocation] = useState(null);
+  const [locationLoading, setLocationLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+
+  const captureSiteLocation = async () => {
+    setErr('');
+    setLocationLoading(true);
+    try {
+      const pos = await getCurrentPosition();
+      setSiteLocation({
+        lat: pos.lat,
+        lng: pos.lng,
+        radiusM: DEFAULT_RADIUS_M,
+        address: '',
+      });
+    } catch (e) {
+      setErr(e.message || 'Không lấy được GPS');
+    } finally {
+      setLocationLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     setErr('');
     setSaving(true);
     try {
       const deadlineIso = deadlineDate ? combineDeadlineLocal(deadlineDate, deadlineTime) : null;
-      await onSave({ name, customerName, deadline: deadlineIso });
+      await onSave({ name, customerName, deadline: deadlineIso, siteLocation });
       onClose();
     } catch (e) {
       setErr(e.message || 'Không lưu được');
@@ -3648,6 +4150,23 @@ function AddProductSheet({ onClose, onSave }) {
           onDateChange={setDeadlineDate}
           onTimeChange={setDeadlineTime}
         />
+        <div className="field">
+          <span className="field-label">Vị trí công trình</span>
+          <button
+            type="button"
+            className="btn btn-secondary btn-block"
+            onClick={captureSiteLocation}
+            disabled={saving || locationLoading}
+          >
+            {locationLoading ? 'Đang lấy GPS...' : siteLocation ? 'Lấy lại vị trí' : 'Lấy vị trí GPS'}
+          </button>
+          <p className="field-note">Bấm nút này khi đang ở công trình để lấy GPS tại nơi bấm.</p>
+          {siteLocation && (
+            <p className="field-note">
+              GPS: {formatCoords(siteLocation.lat, siteLocation.lng)} · Bán kính {siteLocation.radiusM}m
+            </p>
+          )}
+        </div>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
@@ -3661,6 +4180,7 @@ function AddProductSheet({ onClose, onSave }) {
 }
 
 function ProductGoodsPercentSheet({ product, onClose, onSave }) {
+  const label = nodeLevelLabel(product);
   const [value, setValue] = useState(
     product?.goodsPercent !== null && product?.goodsPercent !== undefined ? String(product.goodsPercent) : ''
   );
@@ -3689,7 +4209,7 @@ function ProductGoodsPercentSheet({ product, onClose, onSave }) {
   return (
     <Sheet title="Tỉ lệ hoàn thành" onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Sản phẩm" name={product?.name || ''} />
+        <SheetHint label={label.charAt(0).toUpperCase() + label.slice(1)} name={product?.name || ''} />
         <div className="field">
           <label className="field-label" htmlFor="product-goods-percent">Phần trăm hoàn thành</label>
           <div className="percent-input-wrap">
@@ -3857,8 +4377,30 @@ function EditNodeSheet({ node, onClose, onSave }) {
   const [deadlineDate, setDeadlineDate] = useState(() => splitDeadlineForInput(node.deadline).date);
   const [deadlineTime, setDeadlineTime] = useState(() => splitDeadlineForInput(node.deadline).time);
   const [assigneeId, setAssigneeId] = useState(() => resolveEditAssigneeId(node));
+  const [siteLocation, setSiteLocation] = useState(node.siteLocation || null);
+  const [locationTouched, setLocationTouched] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+
+  const captureSiteLocation = async () => {
+    setErr('');
+    setLocationLoading(true);
+    try {
+      const pos = await getCurrentPosition();
+      setSiteLocation({
+        lat: pos.lat,
+        lng: pos.lng,
+        radiusM: siteLocation?.radiusM || DEFAULT_RADIUS_M,
+        address: siteLocation?.address || '',
+      });
+      setLocationTouched(true);
+    } catch (e) {
+      setErr(e.message || 'Không lấy được GPS');
+    } finally {
+      setLocationLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     setErr('');
@@ -3870,6 +4412,7 @@ function EditNodeSheet({ node, onClose, onSave }) {
         ...(showStatus ? { status } : {}),
         deadline: deadlineIso,
         assignees: assigneeId ? [assigneeId] : [],
+        ...(showStatus && locationTouched ? { siteLocation } : {}),
       });
       onClose();
     } catch (e) {
@@ -3920,6 +4463,25 @@ function EditNodeSheet({ node, onClose, onSave }) {
           onTimeChange={setDeadlineTime}
           currentIso={node.deadline}
         />
+        {showStatus && (
+          <div className="field">
+            <span className="field-label">Vị trí công trình</span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-block"
+              onClick={captureSiteLocation}
+              disabled={saving || locationLoading}
+            >
+              {locationLoading ? 'Đang lấy GPS...' : siteLocation ? 'Lấy lại vị trí' : 'Lấy vị trí GPS'}
+            </button>
+            <p className="field-note">Bấm nút này khi đang ở công trình để lấy GPS tại nơi bấm.</p>
+            {siteLocation && (
+              <p className="field-note">
+                GPS: {formatCoords(siteLocation.lat, siteLocation.lng)} · Bán kính {siteLocation.radiusM}m
+              </p>
+            )}
+          </div>
+        )}
         {showAssignee && (
           <div className="field">
             <label className="field-label">Nhân sự phụ trách</label>
@@ -4118,12 +4680,18 @@ function App({ t: tweakSettings }) {
   const [projectDocLinksSupported, setProjectDocLinksSupported] = useState(true);
   const [projectFieldSettingsSupported, setProjectFieldSettingsSupported] = useState(true);
   const [accessRoleSupported, setAccessRoleSupported] = useState(false);
+  const [locationSavingId, setLocationSavingId] = useState(null);
 
   const accessRole = useMemo(() => {
     const person = people.find((p) => p.id === currentUserId);
     const stored = currentUserId ? readStoredAccessRole(currentUserId) : null;
     return resolveAccessRole(person, stored);
   }, [currentUserId, people]);
+
+  const currentPerson = useMemo(
+    () => people.find((p) => p.id === currentUserId) || null,
+    [currentUserId, people],
+  );
 
   const visibleProducts = useMemo(
     () => filterProductsForUser(products, currentUserId, accessRole),
@@ -4314,12 +4882,41 @@ function App({ t: tweakSettings }) {
     await reloadData();
   }, [reloadData]);
 
-  const persistGoodsPercentForProject = useCallback(async (projectNode, percent) => {
-    await saveProjectGoodsPercent(projectNode, percent);
-    updateNode(projectNode.id, (n) => {
+  const persistGoodsPercentForNode = useCallback(async (targetNode, percent) => {
+    if (!targetNode?._source) return;
+    if (targetNode._source.table === 'tasks') {
+      await saveTaskGoodsPercent(targetNode, percent);
+    } else if (targetNode._source.table === 'projects') {
+      await saveProjectGoodsPercent(targetNode, percent);
+    } else {
+      throw new Error('Chỉ lưu tỉ lệ hoàn thành cho subtask hoặc dự án');
+    }
+    updateNode(targetNode.id, (n) => {
       n.goodsPercent = percent === null || percent === undefined ? null : Math.round(Number(percent));
     });
   }, []);
+
+  const captureLocationForProject = useCallback(async (projectNode) => {
+    if (!projectNode?._source || locationSavingId) return;
+    setLocationSavingId(projectNode.id);
+    try {
+      const pos = await getCurrentPosition();
+      const nextSiteLocation = {
+        lat: pos.lat,
+        lng: pos.lng,
+        radiusM: projectNode.siteLocation?.radiusM || DEFAULT_RADIUS_M,
+        address: projectNode.siteLocation?.address || '',
+      };
+      await saveProjectSiteLocation(projectNode, nextSiteLocation);
+      updateNode(projectNode.id, (n) => {
+        n.siteLocation = nextSiteLocation;
+      });
+    } catch (e) {
+      window.alert(e.message || 'Không lấy được GPS');
+    } finally {
+      setLocationSavingId(null);
+    }
+  }, [locationSavingId]);
 
   const handleAttendanceCheckIn = useCallback(async (projectNode, session) => {
     const list = [...(projectNode.attendanceSessions || []), session];
@@ -4486,8 +5083,12 @@ function App({ t: tweakSettings }) {
 
   if (loading) {
     return (
-      <div className="screen" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
-        <div style={{ textAlign: 'center', color: 'var(--muted)' }}>
+      <div className="screen loading-screen">
+        <div className="loading-brand">
+          <img src={APP_LOGO} alt={APP_NAME} className="loading-logo" />
+          <div className="loading-company">{APP_NAME}</div>
+        </div>
+        <div className="loading-status">
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>Đang tải dữ liệu…</div>
           <div style={{ fontSize: 13 }}>Kết nối Supabase</div>
         </div>
@@ -4535,6 +5136,12 @@ function App({ t: tweakSettings }) {
     onEditStartedAt: () => {
       const proj = projectNode || (currentNode?._source?.table === 'projects' ? currentNode : null);
       if (proj) setSheet({ type: 'startedAt', nodeId: proj.id });
+    },
+    onEditGoodsPercent: (targetNode) => {
+      const node = targetNode || currentNode;
+      if (node?._source?.table === 'tasks') {
+        setSheet({ type: 'goodsPercent', nodeId: node.id });
+      }
     },
     onOpenAssignees: () => setSheet({ type: 'assignees' }),
     onAddChild: openAddChild,
@@ -4594,6 +5201,8 @@ function App({ t: tweakSettings }) {
       await persistWorkActionsForNode(node, list);
     },
     onCompleteNode: handleCompleteNode,
+    onCaptureLocation: captureLocationForProject,
+    locationSavingId,
     ...fieldOpsHandlers,
   };
 
@@ -4602,7 +5211,7 @@ function App({ t: tweakSettings }) {
   // Decide which screen to render
   let screen;
   if (tab === 'attendance') {
-    screen = <AttendanceEmbedView />;
+    screen = <AttendanceEmbedView person={currentPerson} currentUserId={currentUserId} />;
   } else if (tab === 'schedule' || tab === 'labor') {
     screen = (
       <FieldOpsScreen
@@ -4630,7 +5239,6 @@ function App({ t: tweakSettings }) {
           openChild={openChild}
           back={back}
           openNodeActions={openNodeActions}
-          onEditGoodsPercent={(product) => setSheet({ type: 'goodsPercent', nodeId: product.id })}
           {...detailHandlers}
         />
       );
@@ -4642,7 +5250,8 @@ function App({ t: tweakSettings }) {
           onOpenActions={openNodeActions}
           onComplete={handleCompleteNode}
           onAddProduct={openAddProduct}
-          onEditGoodsPercent={(product) => setSheet({ type: 'goodsPercent', nodeId: product.id })}
+          onCaptureLocation={captureLocationForProject}
+          locationSavingId={locationSavingId}
           currentUserId={currentUserId}
           canBulkDelete
           onDeleteSelected={handleDeleteProducts}
@@ -4689,6 +5298,7 @@ function App({ t: tweakSettings }) {
       <SubtasksDashboard
         products={visibleProducts}
         onOpenNode={jumpToNode}
+        onEditGoodsPercent={(node) => setSheet({ type: 'goodsPercent', nodeId: node.id })}
       />
     );
   } else if (tab === 'people') {
@@ -4776,6 +5386,11 @@ function App({ t: tweakSettings }) {
         <WorkActionSheet
           action={sheet.action}
           defaultKind={sheet.defaultKind || 'note'}
+          evaluationTypeOptions={uniqueTextOptions(
+            (sheetNode.workActions || [])
+              .filter((entry) => normalizeWorkActionKind(entry.kind) === 'evaluation')
+              .map((entry) => entry.evaluationType)
+          )}
           onClose={() => setSheet(null)}
           canDelete={canDeleteWorkAction(accessRole, sheet.action, sheetNode, currentUserId)}
           onSave={async (entry) => {
@@ -4839,8 +5454,8 @@ function App({ t: tweakSettings }) {
       {sheet && sheet.type === 'addProduct' && (
         <AddProductSheet
           onClose={() => setSheet(null)}
-          onSave={async ({ name, customerName, deadline }) => {
-            const row = await createProduct({ name, customerName, deadline, ownerUserId: currentUserId });
+          onSave={async ({ name, customerName, deadline, siteLocation }) => {
+            const row = await createProduct({ name, customerName, deadline, siteLocation, ownerUserId: currentUserId });
             await reloadData();
             if (row?.project_id) {
               navigate(buildProductPath([row.project_id], effectiveLayout));
@@ -4852,7 +5467,7 @@ function App({ t: tweakSettings }) {
         <ProductGoodsPercentSheet
           product={sheetNode}
           onClose={() => setSheet(null)}
-          onSave={(percent) => persistGoodsPercentForProject(sheetNode, percent)}
+          onSave={(percent) => persistGoodsPercentForNode(sheetNode, percent)}
         />
       )}
       {sheet && sheet.type === 'addChild' && (() => {
@@ -4939,7 +5554,11 @@ function App({ t: tweakSettings }) {
           node={sheetNode}
           onClose={() => setSheet(null)}
           onSave={async (payload) => {
-            await saveNodeFull(sheetNode, payload);
+            const { siteLocation, ...nodePayload } = payload;
+            await saveNodeFull(sheetNode, nodePayload);
+            if (Object.prototype.hasOwnProperty.call(payload, 'siteLocation') && sheetNode._source?.table === 'projects') {
+              await saveProjectSiteLocation(sheetNode, siteLocation);
+            }
             await reloadData();
           }}
         />

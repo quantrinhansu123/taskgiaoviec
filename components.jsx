@@ -184,13 +184,17 @@ function PhotoThumb({ photo, onClick, onView }) {
 }
 
 // ─── Compact item (child card — same layout as product card) ───────
-function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, active = false }) {
+function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, onEditGoodsPercent, active = false }) {
   const { t } = useI18n();
   const stats = aggregate(node);
   const hasChildren = node.children && node.children.length > 0;
   const isFeature = node?._source?.table === 'features';
+  const isSubtask = node?._source?.table === 'tasks' && Boolean(node?._source?.parentTaskId);
   const childCount = (node.children || []).length;
-  const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+  const manualPct = node.goodsPercent !== null && node.goodsPercent !== undefined ? Number(node.goodsPercent) : null;
+  const pct = Number.isFinite(manualPct)
+    ? Math.max(0, Math.min(100, Math.round(manualPct)))
+    : (stats.total ? Math.round((stats.done / stats.total) * 100) : 0);
   const tone = deadlineTone(node.deadline, node.status);
 
   return (
@@ -220,6 +224,9 @@ function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, active = fal
       </div>
       <div className="pc-meta">
         <StatusChip status={node.status}/>
+        {node.goodsPercent !== null && node.goodsPercent !== undefined && (
+          <span className="pc-goods-percent">{node.goodsPercent}% hoàn thành</span>
+        )}
         {node.deadline && (
           <span className={`chip deadline ${tone !== 'neutral' ? tone : ''}`}>
             <Icon.cal/>{formatDeadline(node.deadline)}
@@ -284,19 +291,40 @@ function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, active = fal
             {t('workComplete')}
           </button>
         )}
+        {isSubtask && typeof onEditGoodsPercent === 'function' && (
+          <button
+            type="button"
+            className="product-card-percent-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditGoodsPercent(node);
+            }}
+          >
+            <Icon.edit/>
+            Tỉ lệ hoàn thành
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
 // ─── Note block ──────────────────────────────────────────────────
-function NoteBlock({ text, onEdit }) {
+function NoteBlock({ text, onEdit, label }) {
   if (!text) return null;
   const displayText = String(text).replace(/\r\n/g, '\n').replace(/\\n/g, '\n');
   return (
     <div className="note-block">
       <Icon.note className="note-icon"/>
-      <div className="note-text">{displayText}</div>
+      <div className="note-text">
+        {label && (
+          <>
+            <span className="note-label">{label}</span>
+            <br />
+          </>
+        )}
+        {displayText}
+      </div>
       <button className="note-edit" onClick={onEdit}>Sửa</button>
     </div>
   );
