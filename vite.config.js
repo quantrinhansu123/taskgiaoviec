@@ -5,12 +5,12 @@ export default defineConfig({
   plugins: [react()],
   envDir: '.',
   server: {
-    port: 3000,
+    port: 3001,
     strictPort: true,
     open: '/desktop/san-pham',
   },
   preview: {
-    port: 3000,
+    port: 3001,
     strictPort: true,
   },
 });
