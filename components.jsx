@@ -1,6 +1,7 @@
 // Components for Check Lỗi Việc
 
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   PEOPLE,
   aggregate,
@@ -185,6 +186,14 @@ function PhotoThumb({ photo, onClick, onView }) {
 }
 
 // ─── Compact item (child card — same layout as product card) ───────
+function activateCardNavigation(event, onOpen) {
+  if (!onOpen) return;
+  if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+  if (event.type === 'keydown') event.preventDefault();
+  if (event.target.closest('button, a, input, select, textarea, label')) return;
+  onOpen();
+}
+
 function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, onEditGoodsPercent, active = false }) {
   const { t } = useI18n();
   const stats = aggregate(node);
@@ -198,10 +207,15 @@ function ItemCard({ node, depth, onOpen, onOpenActions, onComplete, onEditGoodsP
     : (stats.total ? Math.round((stats.done / stats.total) * 100) : 0);
   const tone = deadlineTone(node.deadline, node.status);
 
+  const openCard = onOpen ? () => onOpen() : undefined;
+
   return (
     <div
       className={`product-card item-card item ${node.status === 'fail' ? 'fail' : ''} ${node.status === 'done' ? 'done' : ''} ${active ? 'item--active' : ''}`}
-      onClick={onOpen}
+      role={openCard ? 'button' : undefined}
+      tabIndex={openCard ? 0 : undefined}
+      onClick={openCard ? (event) => activateCardNavigation(event, openCard) : undefined}
+      onKeyDown={openCard ? (event) => activateCardNavigation(event, openCard) : undefined}
     >
       <div className="pc-row1">
         <div className="pc-head">
@@ -333,19 +347,22 @@ function NoteBlock({ text, onEdit, label }) {
 
 // ─── Sheet (bottom modal) ────────────────────────────────────────
 function Sheet({ title, onClose, children, actions, className = '' }) {
-  return (
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <>
-      <div className="sheet-backdrop" onClick={onClose}/>
-      <div className={`sheet ${className}`.trim()}>
+      <div className="sheet-backdrop" onClick={onClose} aria-hidden="true"/>
+      <div className={`sheet ${className}`.trim()} role="dialog" aria-modal="true" aria-label={title}>
         <div className="grab"/>
         <div className="sheet-head">
           <h3>{title}</h3>
           {actions}
-          <button className="sheet-close" onClick={onClose}><Icon.close/></button>
+          <button type="button" className="sheet-close" onClick={onClose} aria-label="Close"><Icon.close/></button>
         </div>
         <div className="sheet-body">{children}</div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 
@@ -361,4 +378,5 @@ export {
   NoteBlock,
   Sheet,
   photoBg,
+  activateCardNavigation,
 };

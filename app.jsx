@@ -82,6 +82,7 @@ import { DEFAULT_RADIUS_M, newTeamScheduleId } from './lib/siteLocation.js';
 import { getCurrentPosition, formatCoords } from './lib/geolocation.js';
 import { teamsFromPeople } from './lib/teams.js';
 import { AttendancePanel } from './components/AttendancePanel.jsx';
+import { AssignedCheckInQueue } from './components/AssignedCheckInQueue.jsx';
 import { SiteLocationSheet, TeamScheduleSheet, ProjectStartedAtSheet } from './components/FieldOpsSheets.jsx';
 import { FieldOpsScreen } from './components/FieldOpsScreen.jsx';
 import { DateTimeFields } from './components/DateTimeFields.jsx';
@@ -113,6 +114,7 @@ import {
   NoteBlock,
   Sheet,
   photoBg,
+  activateCardNavigation,
 } from './components.jsx';
 import { IOSDevice } from './ios-frame.jsx';
 import {
@@ -2049,8 +2051,15 @@ function ProductCard({
   const pct = taskPct;
   const tone = deadlineTone(product.deadline, product.status);
   const modules = (product.children || []).length;
+  const openCard = onOpen ? () => onOpen() : undefined;
   return (
-    <div className={`product-card ${product.status === 'fail' ? 'fail' : ''} ${product.status === 'done' ? 'done' : ''} ${selected ? 'selected' : ''}`} onClick={onOpen}>
+    <div
+      className={`product-card ${product.status === 'fail' ? 'fail' : ''} ${product.status === 'done' ? 'done' : ''} ${selected ? 'selected' : ''}`}
+      role={openCard ? 'button' : undefined}
+      tabIndex={openCard ? 0 : undefined}
+      onClick={openCard ? (event) => activateCardNavigation(event, openCard) : undefined}
+      onKeyDown={openCard ? (event) => activateCardNavigation(event, openCard) : undefined}
+    >
       <div className="pc-row1">
         <div className="pc-head">
           <div className="pc-title-line">
@@ -2151,6 +2160,8 @@ function ProductsHome({
   products, onOpen, onOpenActions, onComplete, onAddProduct, onDeleteSelected,
   onCaptureLocation, locationSavingId = null,
   panel = false, currentUserId = null, canBulkDelete = false,
+  projectFieldSettingsSupported = true,
+  onAttendanceCheckIn, onAttendanceCheckOut,
 }) {
   const { t, locale } = useI18n();
   const [tab, setTab] = useState('active'); // active | done | all
@@ -2322,6 +2333,17 @@ function ProductsHome({
         </div>
         )}
 
+        {!panel && projectFieldSettingsSupported && typeof onAttendanceCheckIn === 'function' && (
+          <AssignedCheckInQueue
+            products={products}
+            currentUserId={currentUserId}
+            people={PEOPLE}
+            onCheckIn={onAttendanceCheckIn}
+            onCheckOut={onAttendanceCheckOut}
+            onOpenProject={onOpen}
+          />
+        )}
+
         <div className="home-search" style={{ marginTop: panel ? 8 : 6 }}>
           <Icon.search style={{ color: 'var(--muted-2)' }}/>
           <input
@@ -2391,10 +2413,7 @@ function ProductsHome({
             <ProductCard
               key={p.id}
               product={p}
-              onOpen={() => {
-                if (showBulkToolbar) toggleProductSelection(p.id);
-                else onOpen(p);
-              }}
+              onOpen={() => onOpen(p)}
               onOpenActions={onOpenActions}
               onComplete={onComplete}
               onCaptureLocation={onCaptureLocation}
@@ -4943,6 +4962,14 @@ function App({ t: tweakSettings }) {
     await persistAttendanceForProject(projectNode, list);
   }, [persistAttendanceForProject]);
 
+  const attendanceCheckInForProject = useCallback(async (projectNode, session) => {
+    await handleAttendanceCheckIn(projectNode, session);
+  }, [handleAttendanceCheckIn]);
+
+  const attendanceCheckOutForProject = useCallback(async (projectNode, activeSession, pos, auto) => {
+    await handleAttendanceCheckOut(projectNode, activeSession, pos, auto);
+  }, [handleAttendanceCheckOut]);
+
   const fieldOpsHandlers = {
     currentUserId,
     accessRole,
@@ -5263,6 +5290,9 @@ function App({ t: tweakSettings }) {
           currentUserId={currentUserId}
           canBulkDelete
           onDeleteSelected={handleDeleteProducts}
+          projectFieldSettingsSupported={projectFieldSettingsSupported}
+          onAttendanceCheckIn={attendanceCheckInForProject}
+          onAttendanceCheckOut={attendanceCheckOutForProject}
         />
       );
     } else if (!currentNode) {
