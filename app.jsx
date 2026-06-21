@@ -2528,6 +2528,7 @@ function ProjectDesktopDashboard({
   onAddFeature,
   onOpenSiteSettings,
   onOpenTeamSchedule,
+  onOpenAssignees,
 }) {
   const stats = aggregate(project);
   const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
@@ -2650,6 +2651,11 @@ function ProjectDesktopDashboard({
               <Icon.cal/> Lịch đội
             </button>
           )}
+          {typeof onOpenAssignees === 'function' && (
+            <button type="button" className="btn btn-secondary" onClick={() => onOpenAssignees(project)}>
+              <Icon.plus/> Thêm nhân sự
+            </button>
+          )}
           {typeof onAddFeature === 'function' && (
             <button type="button" className="btn btn-primary" onClick={() => onAddFeature(project)}>
               <Icon.plus/> Thêm hạng mục
@@ -2750,11 +2756,21 @@ function ProjectDesktopDashboard({
             </div>
           </div>
           <div className="project-dashboard-people">
-            {data.assignees.length > 0 && <Avatars ids={data.assignees} size="md" max={8} alwaysShow/>}
-            {data.assignees.slice(0, 8).map((id) => (
-              <span key={id}>{peopleMap.get(id)?.name || id}</span>
+            {data.assignees.length > 0 && <Avatars ids={data.assignees.map((name) => {
+              const person = PEOPLE.find((p) => p.name === name);
+              return person?.id || name;
+            })} size="md" max={8} alwaysShow/>}
+            {data.assignees.slice(0, 8).map((name) => (
+              <span key={name}>{name}</span>
             ))}
             {data.assignees.length === 0 && <div className="empty">Chưa gán nhân sự.</div>}
+            <div style={{ marginTop: 12 }}>
+              {typeof onOpenAssignees === 'function' && (
+                <button type="button" className="btn btn-secondary" onClick={() => onOpenAssignees(project)}>
+                  <Icon.plus/> Thêm nhân sự
+                </button>
+              )}
+            </div>
           </div>
         </section>
       </div>
@@ -3022,6 +3038,7 @@ function DesktopProductsSplit({
             onAddFeature={onAddFeature}
             onOpenSiteSettings={detailProps.onOpenSiteSettings}
             onOpenTeamSchedule={detailProps.onOpenTeamSchedule}
+            onOpenAssignees={detailProps.onOpenAssignees}
           />
         ) : currentNode ? (
           <NodeDetail
@@ -4569,7 +4586,13 @@ function ConfirmDeleteSheet({ node, onClose, onConfirm }) {
 }
 
 function AssigneeSheet({ node, onClose, onSave }) {
-  const [selected, setSelected] = useState(new Set(node.assignees));
+  // node.assignees now contains names, convert back to IDs for logic
+  const assigneeIds = (node.assignees || []).map((name) => {
+    const person = PEOPLE.find((p) => p.name === name);
+    return person?.id;
+  }).filter(Boolean);
+  
+  const [selected, setSelected] = useState(new Set(assigneeIds));
   const toggle = (id) => {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
@@ -4795,7 +4818,7 @@ function App({ t: tweakSettings }) {
         }
       }
       if (target && patchForDb) {
-        saveNodePatch(target, patchForDb).catch((err) => {
+        saveNodePatch(target, patchForDb, people).catch((err) => {
           console.error('[Supabase] Lưu thất bại:', err);
         });
       }
@@ -5178,7 +5201,7 @@ function App({ t: tweakSettings }) {
         setSheet({ type: 'goodsPercent', nodeId: node.id });
       }
     },
-    onOpenAssignees: () => setSheet({ type: 'assignees' }),
+    onOpenAssignees: (node) => setSheet({ type: 'assignees', nodeId: node?.id || currentId }),
     onAddChild: openAddChild,
     onAddFeature: openAddFeature,
     onPastePhotos: handlePastePhotos,
