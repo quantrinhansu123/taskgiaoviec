@@ -70,6 +70,7 @@ import { formatCompletedAt } from './lib/nodeCompletion.js';
 import {
   resolveAccessRole,
   isAdmin,
+  ACCESS_ROLE,
   canDeleteNode,
   canDeleteWorkAction,
   canEditWorkAction,
@@ -4738,8 +4739,16 @@ function App({ t: tweakSettings }) {
 
   const accessRole = useMemo(() => {
     const person = people.find((p) => p.id === currentUserId);
+    if (!person) return ACCESS_ROLE.WORKER;
     const stored = currentUserId ? readStoredAccessRole(currentUserId) : null;
     return resolveAccessRole(person, stored);
+  }, [currentUserId, people]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    const person = people.find((p) => p.id === currentUserId);
+    if (!person) return;
+    writeStoredAccessRole(currentUserId, resolveAccessRole(person, null));
   }, [currentUserId, people]);
 
   const currentPerson = useMemo(
@@ -4896,9 +4905,10 @@ function App({ t: tweakSettings }) {
     const session = await authenticatePersonLogin({ phone, password });
     setCurrentUserId(session.userId);
     writeStoredCurrentUserId(session.userId);
-    if (session.accessRole) {
-      writeStoredAccessRole(session.userId, session.accessRole);
-    }
+    writeStoredAccessRole(
+      session.userId,
+      session.accessRole || ACCESS_ROLE.WORKER,
+    );
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -4921,6 +4931,7 @@ function App({ t: tweakSettings }) {
   }, [reloadData, stack, navigate, effectiveLayout, accessRole]);
 
   const handleDeleteProducts = useCallback(async (productIds) => {
+    if (!canDeleteNode(accessRole)) return;
     const ids = new Set(productIds || []);
     const nodes = products.filter((p) => ids.has(p.id));
     for (const node of nodes) {
@@ -4930,7 +4941,7 @@ function App({ t: tweakSettings }) {
     if (stack.length > 0 && ids.has(stack[0])) {
       navigate(pathForTab('products', effectiveLayout));
     }
-  }, [effectiveLayout, navigate, products, reloadData, stack]);
+  }, [effectiveLayout, navigate, products, reloadData, stack, accessRole]);
 
   const persistAttendanceForProject = useCallback(async (projectNode, sessions) => {
     await saveProjectAttendance(projectNode, sessions);
@@ -5317,7 +5328,7 @@ function App({ t: tweakSettings }) {
           onCaptureLocation={captureLocationForProject}
           locationSavingId={locationSavingId}
           currentUserId={currentUserId}
-          canBulkDelete
+          canBulkDelete={isAdmin(accessRole)}
           onDeleteSelected={handleDeleteProducts}
           projectFieldSettingsSupported={projectFieldSettingsSupported}
           onAttendanceCheckIn={attendanceCheckInForProject}
