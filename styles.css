@@ -63,8 +63,13 @@ body, html {
 }
 
 .scroll {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 /* TopBar — padding chuẩn trong ui-system.css */
@@ -2053,6 +2058,24 @@ label[for="edit-status"] {
   text-transform: uppercase;
 }
 
+.status-choice-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.status-choice-group--inline,
+.status-choice-group--dashboard {
+  margin: 12px 0 4px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.status-choice-group--dashboard {
+  max-width: 420px;
+}
+
 .status-choice-btn {
   min-height: 42px;
   border-radius: 10px;
@@ -2070,9 +2093,15 @@ label[for="edit-status"] {
   cursor: pointer;
 }
 
+.status-choice-btn:disabled:not(.active) {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .status-choice-btn.active {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink);
+  cursor: default;
 }
 
 .status-choice-dot {
@@ -2270,9 +2299,11 @@ textarea:focus, input:focus { border-color: var(--accent); }
 }
 
 /* Adjust scroll padding to leave room for nav */
-.has-nav .scroll { padding-bottom: 0; }
 .has-nav .product-list { padding-bottom: 86px; }
 .has-nav .people-list { padding-bottom: 86px; }
+.app-viewport.has-nav > .screen--detail > .scroll {
+  padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px));
+}
 .has-nav .fab { bottom: 78px; }
 .fab.has-nav-offset { bottom: 78px; }
 
@@ -3572,11 +3603,27 @@ html.layout-native-mobile #root {
 html.layout-native-mobile .app-viewport {
   height: 100dvh;
   max-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html.layout-native-mobile .app-viewport > .screen {
+  flex: 1 1 auto;
+  height: auto;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 html.layout-native-mobile .screen {
-  height: 100%;
   min-height: 0;
+}
+
+html.layout-native-mobile .screen > .scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 html.layout-native-mobile .topbar {
@@ -3763,6 +3810,10 @@ button,
   margin-top: 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.project-dashboard-title-block .status-choice-group--dashboard {
+  margin-top: 14px;
 }
 
 .project-dashboard-actions {
@@ -3993,6 +4044,50 @@ button,
 
   .project-dashboard-main {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .project-dashboard-hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .project-dashboard-actions {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .project-dashboard-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .project-dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .status-choice-group--dashboard,
+  .status-choice-group--inline {
+    max-width: none;
+  }
+
+  .desktop-shell {
+    flex-direction: column;
+  }
+
+  .desktop-sidebar {
+    width: 100%;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .desktop-products-split {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-split-aside {
+    display: none;
   }
 }
 
