@@ -4848,9 +4848,10 @@ function App({ t: tweakSettings }) {
         setProjectFieldSettingsSupported(fieldOk !== false);
         setAccessRoleSupported(roleOk === true);
         const storedUserId = readStoredCurrentUserId();
-        const nextCurrentUserId = people.some((p) => p.id === storedUserId) ? storedUserId : null;
+        const nextCurrentUserId = people.some((p) => p.id === storedUserId) ? storedUserId : people[0]?.id || null;
         setCurrentUserId(nextCurrentUserId);
         if (!nextCurrentUserId) clearStoredCurrentUserId();
+        else writeStoredCurrentUserId(nextCurrentUserId);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err.message || t('loadError'));
