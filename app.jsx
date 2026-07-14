@@ -170,20 +170,24 @@ function clearStoredCurrentUserId() {
   }
 }
 
-function readPreferredCurrentUserIdFromUrl() {
+function readFlowUserContextFromUrl(search = window.location.search || '') {
   try {
-    const params = new URLSearchParams(window.location.search || '');
-    return params.get('user_id') || params.get('current_user_id') || params.get('flow_user_id') || null;
+    const params = new URLSearchParams(search);
+    return {
+      userId: params.get('user_id') || params.get('current_user_id') || params.get('flow_user_id') || null,
+      force: params.get('source') === 'flow',
+    };
   } catch {
-    return null;
+    return { userId: null, force: false };
   }
 }
 
-function resolveCurrentUserId(people, products, preferredId = null) {
+function resolveCurrentUserId(people, products, preferredId = null, options = {}) {
   if (!people?.length) return null;
   const validIds = new Set(people.map((p) => p.id));
 
   if (preferredId && validIds.has(preferredId)) return preferredId;
+  if (options.ignoreStored) return people[0].id;
 
   const storedId = readStoredCurrentUserId();
   if (storedId && validIds.has(storedId)) return storedId;
@@ -4856,8 +4860,13 @@ function App({ t: tweakSettings }) {
         setProjectDocLinksSupported(projDocOk !== false);
         setProjectFieldSettingsSupported(fieldOk !== false);
         setAccessRoleSupported(roleOk === true);
-        const preferredUserId = readPreferredCurrentUserIdFromUrl();
-        const nextCurrentUserId = resolveCurrentUserId(people, nextProducts, preferredUserId);
+        const flowUserContext = readFlowUserContextFromUrl(location.search);
+        const nextCurrentUserId = resolveCurrentUserId(
+          people,
+          nextProducts,
+          flowUserContext.userId,
+          { ignoreStored: flowUserContext.force },
+        );
         setCurrentUserId(nextCurrentUserId);
         if (!nextCurrentUserId) clearStoredCurrentUserId();
         else writeStoredCurrentUserId(nextCurrentUserId);
@@ -4871,7 +4880,15 @@ function App({ t: tweakSettings }) {
 
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [location.search]);
+
+  useEffect(() => {
+    const flowUserContext = readFlowUserContextFromUrl(location.search);
+    if (!flowUserContext.force || !flowUserContext.userId || !people.length) return;
+    if (!people.some((p) => p.id === flowUserContext.userId)) return;
+    setCurrentUserId(flowUserContext.userId);
+    writeStoredCurrentUserId(flowUserContext.userId);
+  }, [location.search, people]);
 
   // helpers walk all products
   function findNodeIn(id, root) {
@@ -4964,12 +4981,16 @@ function App({ t: tweakSettings }) {
     setProjectFieldSettingsSupported(fieldOk !== false);
     setAccessRoleSupported(roleOk === true);
     setCurrentUserId((prev) => {
-      const nextCurrentUserId = people.some((p) => p.id === prev) ? prev : null;
+      const flowUserContext = readFlowUserContextFromUrl(location.search);
+      const flowUserId = flowUserContext.force && people.some((p) => p.id === flowUserContext.userId)
+        ? flowUserContext.userId
+        : null;
+      const nextCurrentUserId = flowUserId || (people.some((p) => p.id === prev) ? prev : null);
       if (nextCurrentUserId) writeStoredCurrentUserId(nextCurrentUserId);
       else clearStoredCurrentUserId();
       return nextCurrentUserId;
     });
-  }, []);
+  }, [location.search]);
 
   const handleLogin = useCallback(async ({ phone, password }) => {
     const session = await authenticatePersonLogin({ phone, password });
