@@ -170,6 +170,15 @@ function clearStoredCurrentUserId() {
   }
 }
 
+function readPreferredCurrentUserIdFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return params.get('user_id') || params.get('current_user_id') || params.get('flow_user_id') || null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveCurrentUserId(people, products, preferredId = null) {
   if (!people?.length) return null;
   const validIds = new Set(people.map((p) => p.id));
@@ -4847,8 +4856,8 @@ function App({ t: tweakSettings }) {
         setProjectDocLinksSupported(projDocOk !== false);
         setProjectFieldSettingsSupported(fieldOk !== false);
         setAccessRoleSupported(roleOk === true);
-        const storedUserId = readStoredCurrentUserId();
-        const nextCurrentUserId = people.some((p) => p.id === storedUserId) ? storedUserId : people[0]?.id || null;
+        const preferredUserId = readPreferredCurrentUserIdFromUrl();
+        const nextCurrentUserId = resolveCurrentUserId(people, nextProducts, preferredUserId);
         setCurrentUserId(nextCurrentUserId);
         if (!nextCurrentUserId) clearStoredCurrentUserId();
         else writeStoredCurrentUserId(nextCurrentUserId);
