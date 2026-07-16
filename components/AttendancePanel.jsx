@@ -14,6 +14,7 @@ import {
 } from '../lib/attendance.js';
 import { formatDurationMinutes } from '../lib/workActions.js';
 import { isAdmin } from '../lib/permissions.js';
+import { useI18n } from '../lib/i18n.jsx';
 
 export function AttendancePanel({
   project,
@@ -24,6 +25,7 @@ export function AttendancePanel({
   onCheckOut,
   onOpenSiteSettings,
 }) {
+  const { t } = useI18n();
   const site = project?.siteLocation;
   const sessions = project?.attendanceSessions || [];
   const active = currentUserId ? activeSessionForUser(sessions, currentUserId) : null;
@@ -80,12 +82,12 @@ export function AttendancePanel({
       const pos = await getCurrentPosition();
       setLivePos(pos);
       if (site && !isWithinRadius(pos.lat, pos.lng, site.lat, site.lng, site.radiusM)) {
-        throw new Error(`Bạn đang ngoài bán kính công trình (${site.radiusM}m)`);
+        throw new Error(t('checkInOutsideRadius', { radius: site.radiusM }));
       }
       const session = checkinSession({ userId: currentUserId, team, lat: pos.lat, lng: pos.lng });
       await onCheckIn(session);
     } catch (e) {
-      setErr(e.message || 'Không check-in được');
+      setErr(e.message || t('checkInFailed'));
     } finally {
       setLoading(false);
     }
@@ -102,7 +104,7 @@ export function AttendancePanel({
       }
       await onCheckOut(active, pos, auto);
     } catch (e) {
-      setErr(e.message || 'Không check-out được');
+      setErr(e.message || t('checkOutFailed'));
     } finally {
       setLoading(false);
     }
@@ -116,10 +118,10 @@ export function AttendancePanel({
   return (
     <div className="field-ops-section">
       <div className="section-head">
-        <h3>Chấm công GPS</h3>
+        <h3>{t('gpsAttendance')}</h3>
         {isAdmin(accessRole) && typeof onOpenSiteSettings === 'function' && (
           <button type="button" className="section-action" onClick={onOpenSiteSettings}>
-            Cài đặt vị trí
+            {t('siteSettings')}
           </button>
         )}
       </div>
@@ -127,16 +129,16 @@ export function AttendancePanel({
       {!site ? (
         <p className="field-note">
           {isAdmin(accessRole)
-            ? 'Chưa cài đặt vị trí công trình. Nhấn «Cài đặt vị trí» để thiết lập GPS và bán kính.'
-            : 'Công trình chưa có vị trí GPS. Liên hệ Admin để cài đặt.'}
+            ? t('siteNotConfiguredAdmin')
+            : t('siteNotConfiguredWorker')}
         </p>
       ) : (
         <div className="site-location-info">
-          <span className="chip">Bán kính {site.radiusM}m</span>
+          <span className="chip">{t('radiusChip', { radius: site.radiusM })}</span>
           {site.address && <span className="site-address">{site.address}</span>}
           {livePos && (
             <span className={`gps-status ${inRange === false ? 'out' : inRange ? 'in' : ''}`}>
-              {inRange === false ? 'Ngoài công trình' : inRange ? 'Trong công trình' : 'Đang định vị…'}
+              {inRange === false ? t('checkInOutsideSite') : inRange ? t('insideSite') : t('locating')}
             </span>
           )}
         </div>
@@ -144,13 +146,13 @@ export function AttendancePanel({
 
       {active ? (
         <div className="attendance-active">
-          <div className="attendance-active-label">Đang làm việc tại công trình</div>
+          <div className="attendance-active-label">{t('workingAtSite')}</div>
           <div className="attendance-active-time">{formatAttendanceRange(active)}</div>
           <div className="attendance-active-duration">
             {formatDurationMinutes(sessionDurationMinutes(active))}
           </div>
           {outsideCount > 0 && (
-            <p className="field-note warn">Đã ra khỏi bán kính — sẽ tự động check-out…</p>
+            <p className="field-note warn">{t('checkInAutoCheckoutSoon')}</p>
           )}
           <button
             type="button"
@@ -168,7 +170,7 @@ export function AttendancePanel({
           disabled={loading || !site || !currentUserId}
           onClick={handleCheckIn}
         >
-          {loading ? 'Đang xác định GPS…' : 'Check-in GPS'}
+          {loading ? t('gpsChecking') : 'Check-in GPS'}
         </button>
       )}
 
@@ -176,7 +178,7 @@ export function AttendancePanel({
 
       {recentSessions.length > 0 && (
         <div className="attendance-history">
-          <div className="attendance-history-title">Ca gần đây</div>
+          <div className="attendance-history-title">{t('recentSessions')}</div>
           {recentSessions.map((s) => {
             const who = people.find((p) => p.id === s.userId)?.name || '—';
             return (

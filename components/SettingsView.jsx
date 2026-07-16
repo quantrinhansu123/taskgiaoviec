@@ -102,7 +102,7 @@ export function SettingsView({ onBack, onLogout, layout = 'mobile' }) {
                 className="settings-action-btn settings-action-btn--danger"
                 onClick={onLogout}
               >
-                Đăng xuất
+                {t('logout')}
               </button>
             </div>
           </section>

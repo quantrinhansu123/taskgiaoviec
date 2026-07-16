@@ -10,7 +10,7 @@ import {
   teamsFromPeople,
 } from '../lib/teams.js';
 import { currentLocalDateTimeForInput, formatScheduleRange } from '../lib/deadline.js';
-import { useI18n } from '../lib/i18n.jsx';
+import { useI18n, tGlobal } from '../lib/i18n.jsx';
 
 const LABEL_W = 120;
 const COL_W = 41;
@@ -19,26 +19,32 @@ const LANE_H = 46;
 const BAR_H = 32;
 const GROUP_PAD = 14;
 
-const LEVEL_OPTIONS = [
-  ['product', 'Sản phẩm'],
-  ['task', 'Công việc'],
+const levelOptions = () => [
+  ['product', tGlobal('csLevelProduct')],
+  ['task', tGlobal('levelTask')],
   ['subtask', 'Sub-task'],
 ];
 
-const STATUS_OPTIONS = [
-  ['all', 'Tất cả'],
-  ['active', 'Đang chạy'],
-  ['planned', 'Kế hoạch'],
-  ['done', 'Hoàn thành'],
-  ['delayed', 'Trễ'],
+const statusOptions = () => [
+  ['all', tGlobal('all')],
+  ['active', tGlobal('csActive')],
+  ['planned', tGlobal('csPlanned')],
+  ['done', tGlobal('csDone')],
+  ['delayed', tGlobal('csDelayed')],
 ];
 
-const STATUS_META = {
-  done: { label: 'Hoàn thành', color: '#3D8B5F', soft: '#E6F5EC' },
-  active: { label: 'Đang chạy', color: '#4A9A6A', soft: '#EAF6EE' },
-  planned: { label: 'Kế hoạch', color: '#6AA5BF', soft: '#E9F4FA' },
-  delayed: { label: 'Trễ hạn', color: '#C85D48', soft: '#FCECE8' },
+const STATUS_COLORS = {
+  done: { color: '#3D8B5F', soft: '#E6F5EC' },
+  active: { color: '#4A9A6A', soft: '#EAF6EE' },
+  planned: { color: '#6AA5BF', soft: '#E9F4FA' },
+  delayed: { color: '#C85D48', soft: '#FCECE8' },
 };
+
+function statusMetaFor(status) {
+  const colors = STATUS_COLORS[status] || STATUS_COLORS.planned;
+  const labelKey = { done: 'csDone', active: 'csActive', planned: 'csPlanned', delayed: 'csDelayedFull' }[status] || 'csPlanned';
+  return { ...colors, label: tGlobal(labelKey) };
+}
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -65,9 +71,9 @@ function normalizeStatus(bar, todayKey) {
 }
 
 function scheduleLevelLabel(level) {
-  if (level === 'task') return 'CÔNG VIỆC';
-  if (level === 'subtask') return 'SUB-TASK';
-  return 'CÔNG TRÌNH';
+  if (level === 'task') return tGlobal('csLevelHeadTask');
+  if (level === 'subtask') return tGlobal('csLevelHeadSubtask');
+  return tGlobal('csLevelHeadProject');
 }
 
 function packLanes(tasks) {
@@ -151,7 +157,7 @@ function buildGroups(viewMode, teams, tasks) {
   return teams.map((team) => {
     const packed = packLanes(tasks.filter((task) => task.team === team));
     const height = Math.max(1, Math.max(...packed.map((t) => t.lane), 0) + 1) * LANE_H + GROUP_PAD * 2;
-    return { id: team, title: team, sub: `${packed.length} mục`, tasks: packed, height };
+    return { id: team, title: team, sub: tGlobal('csItemsCount', { count: packed.length }), tasks: packed, height };
   });
 }
 
@@ -168,9 +174,9 @@ function Ring({ value }) {
 function ScheduleStats({ kpis, totalLabel }) {
   const cards = [
     [totalLabel, kpis.total, null],
-    ['ĐANG THỰC HIỆN', kpis.inProgress, null],
-    ['HOÀN THÀNH', kpis.done, null],
-    ['TỶ LỆ HOÀN THÀNH', `${kpis.rate} %`, kpis.rate],
+    [tGlobal('csInProgress'), kpis.inProgress, null],
+    [tGlobal('csDoneUpper'), kpis.done, null],
+    [tGlobal('csRate'), `${kpis.rate} %`, kpis.rate],
   ];
   return (
     <div className="cs-stats">
@@ -188,7 +194,7 @@ function ScheduleStats({ kpis, totalLabel }) {
 }
 
 function ScheduleBar({ task, onSelect }) {
-  const meta = STATUS_META[task.status] || STATUS_META.planned;
+  const meta = statusMetaFor(task.status);
   return (
     <button
       type="button"
@@ -202,7 +208,7 @@ function ScheduleBar({ task, onSelect }) {
         '--cs-bar-soft': meta.soft,
         '--cs-bar-progress': `${task.progress}%`,
       }}
-      title={`${task.name}\n${formatScheduleRange(task.startAt, task.endAt) || `${task.startDate} -> ${task.endDate}`}\nTiến độ: ${task.progress}%`}
+      title={`${task.name}\n${formatScheduleRange(task.startAt, task.endAt) || `${task.startDate} -> ${task.endDate}`}\n${tGlobal('progress')}: ${task.progress}%`}
       onClick={() => onSelect(task)}
     >
       <span className="cs-bar-fill" aria-hidden />
@@ -229,10 +235,10 @@ function ScheduleBoard({ days, todayDay, groups, selectedId, onSelect }) {
       <div className="cs-scroll">
         <div className="cs-grid" style={{ width: LABEL_W + timelineW, minHeight: HEADER_H + totalH }}>
           <div className="cs-corner" style={{ width: LABEL_W, height: HEADER_H }}>
-            <strong>Đội thợ</strong>
+            <strong>{tGlobal('csTeamCrew')}</strong>
           </div>
           <div className="cs-days" style={{ left: LABEL_W, width: timelineW, height: HEADER_H }}>
-            <div className="cs-days-title">Ngày</div>
+            <div className="cs-days-title">{tGlobal('csDay')}</div>
             <div className="cs-day-row">
               {days.map((day) => (
                 <div key={day} className={`cs-daycell ${dayNumber(day) === todayDay ? 'is-today' : ''}`}>
@@ -276,7 +282,7 @@ function ScheduleBoard({ days, todayDay, groups, selectedId, onSelect }) {
               });
             })()}
             {!groups.some((group) => group.tasks.length) && (
-              <div className="cs-empty">Chưa có lịch trong tháng này</div>
+              <div className="cs-empty">{tGlobal('csEmptyMonth')}</div>
             )}
           </div>
         </div>
@@ -287,17 +293,17 @@ function ScheduleBoard({ days, todayDay, groups, selectedId, onSelect }) {
 
 function ScheduleDrawer({ task, onClose }) {
   if (!task) return null;
-  const meta = STATUS_META[task.status] || STATUS_META.planned;
+  const meta = statusMetaFor(task.status);
   return (
-    <aside className="cs-drawer" aria-label="Chi tiết lịch">
-      <button type="button" className="cs-drawer-close" onClick={onClose} aria-label="Đóng">×</button>
+    <aside className="cs-drawer" aria-label={tGlobal('csDrawerAria')}>
+      <button type="button" className="cs-drawer-close" onClick={onClose} aria-label={tGlobal('close')}>×</button>
       <span className="cs-status" style={{ color: meta.color, background: meta.soft }}>{meta.label}</span>
       <h3>{task.name}</h3>
       <dl>
         <div><dt>Team</dt><dd>{task.team}</dd></div>
-        <div><dt>Thời gian</dt><dd>{formatScheduleRange(task.startAt, task.endAt) || `${task.startDate} -> ${task.endDate}`}</dd></div>
-        <div><dt>Tiến độ</dt><dd>{task.progress}%</dd></div>
-        {task.note && <div><dt>Ghi chú</dt><dd>{task.note}</dd></div>}
+        <div><dt>{tGlobal('csTime')}</dt><dd>{formatScheduleRange(task.startAt, task.endAt) || `${task.startDate} -> ${task.endDate}`}</dd></div>
+        <div><dt>{tGlobal('progress')}</dt><dd>{task.progress}%</dd></div>
+        {task.note && <div><dt>{tGlobal('workKindNote')}</dt><dd>{task.note}</dd></div>}
       </dl>
       {!!task.assignees.length && (
         <div className="cs-drawer-people">
@@ -347,7 +353,7 @@ export function TeamScheduleView({ products, people, embedded = false }) {
 
   const groups = useMemo(() => buildGroups(viewMode, displayTeams, tasks), [viewMode, displayTeams, tasks]);
   const kpis = useMemo(() => buildScheduleKpis(products, scheduleLevel), [products, scheduleLevel]);
-  const totalLabel = `TỔNG ${scheduleLevelLabel(scheduleLevel)}`;
+  const totalLabel = `${tGlobal('csTotalPrefix')} ${scheduleLevelLabel(scheduleLevel)}`;
 
   const shiftMonth = (delta) => {
     setAnchorDate((d) => {
@@ -372,40 +378,40 @@ export function TeamScheduleView({ products, people, embedded = false }) {
           <header className="cs-phead">
             <div>
               <div className="cs-code">{scheduleLevelLabel(scheduleLevel)}</div>
-              <h2>Kế hoạch công trình</h2>
-              <p>{monthLabel(anchorDate)} · {tasks.length} mục đang hiển thị</p>
+              <h2>{t('csPlanTitle')}</h2>
+              <p>{monthLabel(anchorDate)} · {t('csShowingCount', { count: tasks.length })}</p>
             </div>
             <div className="cs-actions">
               <div className="cs-monthnav">
-                <button type="button" onClick={() => shiftMonth(-1)} aria-label="Tháng trước">‹</button>
+                <button type="button" onClick={() => shiftMonth(-1)} aria-label={t('schedulePrevMonth')}>‹</button>
                 <strong>{monthLabel(anchorDate)}</strong>
-                <button type="button" onClick={() => shiftMonth(1)} aria-label="Tháng sau">›</button>
+                <button type="button" onClick={() => shiftMonth(1)} aria-label={t('scheduleNextMonth')}>›</button>
               </div>
-              <button type="button" className="cs-today-btn" onClick={() => setAnchorDate(new Date())}>Hôm nay</button>
+              <button type="button" className="cs-today-btn" onClick={() => setAnchorDate(new Date())}>{t('today')}</button>
             </div>
           </header>
 
           <div className="cs-subbar">
-            <div className="cs-seg" role="group" aria-label="Kiểu gom lịch">
-              <button type="button" className={viewMode === 'team' ? 'active' : ''} onClick={() => setViewMode('team')}>Theo Team</button>
-              <button type="button" className={viewMode === 'project' ? 'active' : ''} onClick={() => setViewMode('project')}>Theo công trình</button>
+            <div className="cs-seg" role="group" aria-label={t('csGroupModeAria')}>
+              <button type="button" className={viewMode === 'team' ? 'active' : ''} onClick={() => setViewMode('team')}>{t('csByTeam')}</button>
+              <button type="button" className={viewMode === 'project' ? 'active' : ''} onClick={() => setViewMode('project')}>{t('csByProject')}</button>
             </div>
-            <div className="cs-filters" role="group" aria-label="Lọc cấp kế hoạch">
-              {LEVEL_OPTIONS.map(([value, label]) => (
+            <div className="cs-filters" role="group" aria-label={t('csFilterLevelAria')}>
+              {levelOptions().map(([value, label]) => (
                 <button key={value} type="button" className={scheduleLevel === value ? 'active' : ''} onClick={() => setScheduleLevel(value)}>
                   {label}
                 </button>
               ))}
             </div>
-            <div className="cs-filters" role="group" aria-label="Lọc trạng thái">
-              {STATUS_OPTIONS.map(([value, label]) => (
+            <div className="cs-filters" role="group" aria-label={t('csFilterStatusAria')}>
+              {statusOptions().map(([value, label]) => (
                 <button key={value} type="button" className={statusFilter === value ? 'active' : ''} onClick={() => setStatusFilter(value)}>
                   {label}
                 </button>
               ))}
             </div>
             <select className="cs-team-select" value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
-              <option value="">Tất cả Team</option>
+              <option value="">{t('csAllTeams')}</option>
               {teams.map((team) => <option key={team} value={team}>{team}</option>)}
             </select>
           </div>

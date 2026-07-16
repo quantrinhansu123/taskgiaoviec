@@ -5,6 +5,7 @@ import {
   projectProgressPercent,
   teamsFromPeople,
   weekStartMonday,
+  weekEndSunday,
   isoWeekNumber,
   monthStart,
   monthEnd,
@@ -177,6 +178,7 @@ function buildGanttPayload(products = [], people = [], rangeStart, rangeEnd) {
       today: todayInRange,
       year,
       m: month,
+      rangeStart,
     },
     PROJECT: {
       vi: products[0]?.name || 'Lịch công trình',
@@ -223,8 +225,14 @@ function clampRange(from, to) {
     start = end;
     end = tmp;
   }
+  // Always show full weeks Mon–Sun so the grid starts on Monday.
+  start = weekStartMonday(parseLocalDate(start));
+  end = weekEndSunday(parseLocalDate(end));
   if (daysBetween(start, end) > MAX_RANGE_DAYS) {
-    end = addDays(start, MAX_RANGE_DAYS - 1);
+    end = weekEndSunday(parseLocalDate(addDays(start, MAX_RANGE_DAYS - 1)));
+    if (daysBetween(start, end) > MAX_RANGE_DAYS) {
+      end = addDays(start, MAX_RANGE_DAYS - 1);
+    }
   }
   return { start, end };
 }
@@ -243,7 +251,7 @@ export function StandaloneScheduleView({ products, people }) {
     }
     if (mode === 'month') {
       const anchor = parseLocalDate(monthAnchor);
-      return { start: monthStart(anchor), end: monthEnd(anchor) };
+      return clampRange(monthStart(anchor), monthEnd(anchor));
     }
     return clampRange(fromDate, toDate);
   }, [mode, fromDate, toDate, weekAnchor, monthAnchor]);
@@ -267,7 +275,7 @@ export function StandaloneScheduleView({ products, people }) {
   const frameKey = `${mode}:${rangeStart}:${rangeEnd}:${(products || []).length}`;
 
   const applyWeek = useCallback((startKey) => {
-    const start = startKey || weekStartMonday(new Date());
+    const start = weekStartMonday(startKey ? parseLocalDate(startKey) : new Date());
     setMode('week');
     setWeekAnchor(start);
     setFromDate(start);

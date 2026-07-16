@@ -129,7 +129,7 @@ export function DesktopShell({ children, alertCount = 0, onLogout }) {
                 <path d="M10 6H6a2 2 0 00-2 2v8a2 2 0 002 2h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
                 <path d="M14 8l4 4-4 4M18 12H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              Đăng xuất
+              {t('logout')}
             </button>
           )}
         </div>

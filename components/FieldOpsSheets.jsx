@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Sheet } from '../components.jsx';
 import { DateTimeFields } from './DateTimeFields.jsx';
 import { getCurrentPosition, formatCoords } from '../lib/geolocation.js';
-import { DEFAULT_RADIUS_M, RADIUS_PRESETS } from '../lib/siteLocation.js';
+import { DEFAULT_RADIUS_M, radiusPresets } from '../lib/siteLocation.js';
 import { combineDeadlineLocal, splitDeadlineForInput, currentLocalDateTimeForInput } from '../lib/deadline.js';
+import { useI18n } from '../lib/i18n.jsx';
 
 export function SiteLocationSheet({ project, onClose, onSave }) {
+  const { t } = useI18n();
   const existing = project?.siteLocation;
   const [lat, setLat] = useState(existing?.lat?.toString() || '');
   const [lng, setLng] = useState(existing?.lng?.toString() || '');
@@ -23,7 +25,7 @@ export function SiteLocationSheet({ project, onClose, onSave }) {
       setLat(String(pos.lat));
       setLng(String(pos.lng));
     } catch (e) {
-      setErr(e.message || 'Không lấy được GPS');
+      setErr(e.message || t('errGpsFailed'));
     } finally {
       setLoading(false);
     }
@@ -34,7 +36,7 @@ export function SiteLocationSheet({ project, onClose, onSave }) {
     const latN = Number(lat);
     const lngN = Number(lng);
     if (Number.isNaN(latN) || Number.isNaN(lngN)) {
-      setErr('Nhập tọa độ GPS hợp lệ');
+      setErr(t('errValidGps'));
       return;
     }
     setSaving(true);
@@ -47,30 +49,29 @@ export function SiteLocationSheet({ project, onClose, onSave }) {
       });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title="Cài đặt vị trí công trình" onClose={onClose}>
+    <Sheet title={t('siteSheetTitle')} onClose={onClose}>
       <div className="form-stack">
         <p className="field-note">
-          Thiết lập tọa độ GPS và bán kính check-in cho «{project?.name}».
-          Thợ sẽ tự động check-out khi ra khỏi bán kính.
+          {t('siteSheetHint', { name: project?.name })}
         </p>
 
         <button type="button" className="btn btn-secondary btn-block" onClick={captureGps} disabled={loading}>
-          {loading ? 'Đang lấy GPS…' : 'Lấy vị trí hiện tại'}
+          {loading ? t('checkInGpsLoading') : t('useCurrentLocation')}
         </button>
 
         <div className="field">
-          <label className="field-label" htmlFor="site-lat">Vĩ độ (lat)</label>
+          <label className="field-label" htmlFor="site-lat">{t('latLabel')}</label>
           <input id="site-lat" className="field-input" type="text" value={lat} onChange={(e) => setLat(e.target.value)} />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="site-lng">Kinh độ (lng)</label>
+          <label className="field-label" htmlFor="site-lng">{t('lngLabel')}</label>
           <input id="site-lng" className="field-input" type="text" value={lng} onChange={(e) => setLng(e.target.value)} />
         </div>
         {lat && lng && (
@@ -78,35 +79,35 @@ export function SiteLocationSheet({ project, onClose, onSave }) {
         )}
 
         <div className="field">
-          <label className="field-label" htmlFor="site-radius">Bán kính check-in (mét)</label>
+          <label className="field-label" htmlFor="site-radius">{t('radiusLabel')}</label>
           <select
             id="site-radius"
             className="field-input"
             value={radiusM}
             onChange={(e) => setRadiusM(Number(e.target.value))}
           >
-            {RADIUS_PRESETS.map((p) => (
+            {radiusPresets().map((p) => (
               <option key={p.value} value={p.value}>{p.label}</option>
             ))}
           </select>
         </div>
 
         <div className="field">
-          <label className="field-label" htmlFor="site-address">Địa chỉ / ghi chú</label>
+          <label className="field-label" htmlFor="site-address">{t('addressNoteLabel')}</label>
           <input
             id="site-address"
             className="field-input"
             type="text"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
-            placeholder="VD: 123 Nguyễn Văn Linh, Q.7"
+            placeholder={t('addressPlaceholder')}
           />
         </div>
 
         {err && <p className="field-error">{err}</p>}
 
         <button type="button" className="btn btn-primary btn-block" onClick={handleSave} disabled={saving}>
-          {saving ? 'Đang lưu…' : 'Lưu vị trí công trình'}
+          {saving ? t('workSaving') : t('saveSiteLocation')}
         </button>
       </div>
     </Sheet>
@@ -126,6 +127,7 @@ function combineDateTime(date, time, fallbackNow = false) {
 }
 
 export function TeamScheduleSheet({ project, teams = [], schedule, onClose, onSave, onDelete }) {
+  const { t } = useI18n();
   const startInit = splitDeadlineForInput(schedule?.startAt || schedule?.startDate);
   const endInit = splitDeadlineForInput(schedule?.endAt || schedule?.endDate);
 
@@ -145,15 +147,15 @@ export function TeamScheduleSheet({ project, teams = [], schedule, onClose, onSa
   };
 
   const handleSave = async () => {
-    if (!team.trim()) { setErr('Chọn đội thợ'); return; }
-    if (!startDate) { setErr('Chọn ngày giờ bắt đầu'); return; }
+    if (!team.trim()) { setErr(t('errPickTeam')); return; }
+    if (!startDate) { setErr(t('errPickStart')); return; }
     const startAt = combineDateTime(startDate, startTime, true);
-    if (!startAt) { setErr('Ngày giờ bắt đầu không hợp lệ'); return; }
+    if (!startAt) { setErr(t('errInvalidStart')); return; }
     const endAt = endDate
       ? combineDateTime(endDate, endTime || '17:00', false)
       : startAt;
     if (endAt && new Date(endAt) < new Date(startAt)) {
-      setErr('Thời gian kết thúc phải sau thời gian bắt đầu');
+      setErr(t('errEndAfterStart'));
       return;
     }
     setSaving(true);
@@ -169,61 +171,61 @@ export function TeamScheduleSheet({ project, teams = [], schedule, onClose, onSa
       });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title={schedule ? 'Sửa lịch đội' : 'Gán đội vào công trình'} onClose={onClose}>
+    <Sheet title={schedule ? t('editTeamSchedule') : t('assignTeamToSite')} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="ts-team">Đội thợ</label>
+          <label className="field-label" htmlFor="ts-team">{t('teamCrewLabel')}</label>
           <select id="ts-team" className="field-input" value={team} onChange={(e) => setTeam(e.target.value)}>
             {teams.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
 
         <DateTimeFields
-          label="Ngày giờ bắt đầu"
+          label={t('startDateTimeLabel')}
           dateId="ts-start-date"
           timeId="ts-start-time"
           date={startDate}
           time={startTime}
           onDateChange={setStartDate}
           onTimeChange={setStartTime}
-          note="Dùng để tính tiến độ và hiển thị trên Timeline."
+          note={t('timelineNote')}
           required
         />
         <div className="btn-row btn-row--tight">
           <button type="button" className="btn btn-secondary btn-sm" onClick={stampNowStart}>
-            Bây giờ
+            {t('now')}
           </button>
         </div>
 
         <DateTimeFields
-          label="Ngày giờ kết thúc"
+          label={t('endDateTimeLabel')}
           dateId="ts-end-date"
           timeId="ts-end-time"
           date={endDate}
           time={endTime}
           onDateChange={setEndDate}
           onTimeChange={setEndTime}
-          note="Để trống ngày kết thúc sẽ dùng cùng ngày bắt đầu."
+          note={t('endEmptyNote')}
         />
 
         <div className="field">
-          <label className="field-label" htmlFor="ts-note">Ghi chú</label>
+          <label className="field-label" htmlFor="ts-note">{t('workKindNote')}</label>
           <input id="ts-note" className="field-input" type="text" value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
         {err && <p className="field-error">{err}</p>}
         <button type="button" className="btn btn-primary btn-block" onClick={handleSave} disabled={saving}>
-          {saving ? 'Đang lưu…' : 'Lưu lịch'}
+          {saving ? t('workSaving') : t('saveSchedule')}
         </button>
         {schedule && onDelete && (
           <button type="button" className="btn btn-danger btn-block" onClick={async () => { await onDelete(); onClose(); }}>
-            Xóa lịch này
+            {t('deleteSchedule')}
           </button>
         )}
       </div>
@@ -232,6 +234,7 @@ export function TeamScheduleSheet({ project, teams = [], schedule, onClose, onSa
 }
 
 export function ProjectStartedAtSheet({ project, onClose, onSave }) {
+  const { t } = useI18n();
   const initial = splitDeadlineForInput(project?.startedAt);
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time || '08:00');
@@ -251,7 +254,7 @@ export function ProjectStartedAtSheet({ project, onClose, onSave }) {
       await onSave(iso);
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
@@ -259,25 +262,25 @@ export function ProjectStartedAtSheet({ project, onClose, onSave }) {
 
   const handleSave = () => {
     if (!date) {
-      setErr('Chọn ngày giờ bắt đầu.');
+      setErr(t('errPickStartDot'));
       return;
     }
     const iso = combineDateTime(date, time, true);
     if (!iso) {
-      setErr('Ngày giờ không hợp lệ.');
+      setErr(t('errInvalidDateTimeShort'));
       return;
     }
     persist(iso);
   };
 
   return (
-    <Sheet title="Ngày giờ bắt đầu công trình" onClose={onClose}>
+    <Sheet title={t('startSheetTitle')} onClose={onClose}>
       <div className="form-stack">
         <p className="field-note">
-          Thời điểm bắt đầu thi công «{project?.name}». Hệ thống dùng cùng hạn hoàn thành để tính khoảng thời gian trên Timeline và báo cáo giờ.
+          {t('startSheetHint', { name: project?.name })}
         </p>
         <DateTimeFields
-          label="Ngày giờ bắt đầu"
+          label={t('startDateTimeLabel')}
           dateId="proj-start-date"
           timeId="proj-start-time"
           date={date}
@@ -288,16 +291,16 @@ export function ProjectStartedAtSheet({ project, onClose, onSave }) {
         />
         <div className="btn-row btn-row--tight">
           <button type="button" className="btn btn-secondary btn-sm" onClick={stampNow}>
-            Bây giờ
+            {t('now')}
           </button>
         </div>
         {err && <p className="field-error">{err}</p>}
         <button type="button" className="btn btn-primary btn-block" onClick={handleSave} disabled={saving || !date}>
-          {saving ? 'Đang lưu…' : 'Lưu ngày giờ bắt đầu'}
+          {saving ? t('workSaving') : t('saveStartAt')}
         </button>
         {project?.startedAt && (
           <button type="button" className="btn btn-ghost-danger btn-block" onClick={() => persist(null)} disabled={saving}>
-            Xóa ngày giờ bắt đầu
+            {t('deleteStartAt')}
           </button>
         )}
       </div>

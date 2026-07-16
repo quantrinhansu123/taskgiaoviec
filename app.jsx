@@ -45,7 +45,7 @@ import { SettingsView } from './components/SettingsView.jsx';
 import { DiscussionChat } from './components/DiscussionChat.jsx';
 import { collectProjectPeople } from './lib/projectPeople.js';
 import { APP_LOGO, APP_NAME } from './lib/brand.js';
-import { useI18n, formatTodayHeadline } from './lib/i18n.jsx';
+import { useI18n, formatTodayHeadline, tGlobal, statusLabelGlobal } from './lib/i18n.jsx';
 import { swapLayoutPath } from './lib/routes.js';
 import { useEffectiveLayout } from './lib/useEffectiveLayout.js';
 import { combineDeadlineLocal, splitDeadlineForInput, currentLocalDateTimeForInput, formatScheduleRange } from './lib/deadline.js';
@@ -137,14 +137,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 const CURRENT_USER_STORAGE_KEY = 'taskApp.currentUserId';
-const DEFAULT_EVALUATION_TYPES = [
-  'Chất lượng',
-  'Tiến độ',
-  'An toàn',
-  'Nhân sự',
-  'Vật tư',
-  'Khách hàng',
-];
+const defaultEvaluationTypes = () => tGlobal('evalDefaultTypes').split('|');
 
 function readStoredCurrentUserId() {
   try {
@@ -170,24 +163,11 @@ function clearStoredCurrentUserId() {
   }
 }
 
-function readFlowUserContextFromUrl(search = window.location.search || '') {
-  try {
-    const params = new URLSearchParams(search);
-    return {
-      userId: params.get('user_id') || params.get('current_user_id') || params.get('flow_user_id') || null,
-      force: params.get('source') === 'flow',
-    };
-  } catch {
-    return { userId: null, force: false };
-  }
-}
-
-function resolveCurrentUserId(people, products, preferredId = null, options = {}) {
+function resolveCurrentUserId(people, products, preferredId = null) {
   if (!people?.length) return null;
   const validIds = new Set(people.map((p) => p.id));
 
   if (preferredId && validIds.has(preferredId)) return preferredId;
-  if (options.ignoreStored) return people[0].id;
 
   const storedId = readStoredCurrentUserId();
   if (storedId && validIds.has(storedId)) return storedId;
@@ -231,9 +211,9 @@ function escapeHtmlWithBreaks(value) {
 
 function printSubtaskReport({ person, items }) {
   if (!items?.length) return;
-  const printedAt = new Date().toLocaleString('vi-VN');
+  const printedAt = new Date().toLocaleString();
   const rows = items.map((it, index) => {
-    const status = STATUS_META[it.node.status]?.label || it.node.status || '';
+    const status = statusLabelGlobal(it.node.status);
     return `
       <tr>
         <td>${index + 1}</td>
@@ -256,7 +236,7 @@ function printSubtaskReport({ person, items }) {
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>Báo cáo sub-task</title>
+        <title>${escapeHtml(tGlobal('printReportTitle'))}</title>
         <style>
           * { box-sizing: border-box; }
           body { font-family: Arial, sans-serif; color: #1f2428; margin: 24px; }
@@ -273,24 +253,24 @@ function printSubtaskReport({ person, items }) {
         </style>
       </head>
       <body>
-        <h1>Báo cáo sub-task</h1>
+        <h1>${escapeHtml(tGlobal('printReportTitle'))}</h1>
         <div class="meta">
-          <span>Nhân sự: <strong>${escapeHtml(person?.name || '')}</strong></span>
-          <span>Số lượng: <strong>${items.length}</strong></span>
-          <span>Thời gian in: ${escapeHtml(printedAt)}</span>
+          <span>${escapeHtml(tGlobal('navPeople'))}: <strong>${escapeHtml(person?.name || '')}</strong></span>
+          <span>${escapeHtml(tGlobal('printQuantity'))}: <strong>${items.length}</strong></span>
+          <span>${escapeHtml(tGlobal('printPrintedAt'))}: ${escapeHtml(printedAt)}</span>
         </div>
         <table>
           <thead>
             <tr>
-              <th>STT</th>
-              <th>Khách hàng</th>
-              <th>Dự án</th>
-              <th>Hạng mục</th>
+              <th>${escapeHtml(tGlobal('printColIndex'))}</th>
+              <th>${escapeHtml(tGlobal('printColCustomer'))}</th>
+              <th>${escapeHtml(tGlobal('levelProject'))}</th>
+              <th>${escapeHtml(tGlobal('levelFeature'))}</th>
               <th>Task</th>
               <th>Sub-task</th>
               <th>Deadline</th>
-              <th>Trạng thái</th>
-              <th>Ghi chú</th>
+              <th>${escapeHtml(tGlobal('status'))}</th>
+              <th>${escapeHtml(tGlobal('printColNote'))}</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -322,7 +302,7 @@ function collectDocLinksFromTree(node) {
       out.push({
         ...d,
         sourceNodeId: cur.id,
-        sourceName: cur.name || 'Mục',
+        sourceName: cur.name || tGlobal('itemFallback'),
         sourceTable: cur._source?.table,
       });
     });
@@ -383,11 +363,11 @@ function taskProgressLabel(item, allItems) {
 }
 
 function priorityForWorkItem(node) {
-  if (node.status === 'fail') return { label: 'Cao', tone: 'high' };
+  if (node.status === 'fail') return { label: tGlobal('priorityHigh'), tone: 'high' };
   const tone = deadlineTone(node.deadline, node.status);
-  if (tone === 'overdue' || tone === 'urgent') return { label: 'Cao', tone: 'high' };
-  if (tone === 'soon') return { label: 'Trung bình', tone: 'medium' };
-  return { label: 'Thấp', tone: 'low' };
+  if (tone === 'overdue' || tone === 'urgent') return { label: tGlobal('priorityHigh'), tone: 'high' };
+  if (tone === 'soon') return { label: tGlobal('priorityMedium'), tone: 'medium' };
+  return { label: tGlobal('priorityLow'), tone: 'low' };
 }
 
 function isWithinDateRange(iso, from, to) {
@@ -428,13 +408,14 @@ function uniqueTextOptions(values) {
 }
 
 function EvaluationTypeCombobox({ value, onChange, options = [] }) {
+  const { t, locale } = useI18n();
   const [open, setOpen] = useState(false);
   const suggestions = useMemo(() => {
     const q = value.trim().toLocaleLowerCase('vi-VN');
-    const list = uniqueTextOptions([...options, ...DEFAULT_EVALUATION_TYPES]);
+    const list = uniqueTextOptions([...options, ...defaultEvaluationTypes()]);
     if (!q) return list.slice(0, 8);
     return list.filter((item) => item.toLocaleLowerCase('vi-VN').includes(q)).slice(0, 8);
-  }, [options, value]);
+  }, [options, value, locale]);
   const exactMatch = suggestions.some((item) => item.toLocaleLowerCase('vi-VN') === value.trim().toLocaleLowerCase('vi-VN'));
 
   return (
@@ -453,13 +434,13 @@ function EvaluationTypeCombobox({ value, onChange, options = [] }) {
           onKeyDown={(event) => {
             if (event.key === 'Escape') setOpen(false);
           }}
-          placeholder="Chọn hoặc gõ loại đánh giá..."
+          placeholder={t('evalTypePlaceholder')}
           autoComplete="off"
         />
         <button
           type="button"
           className="combo-toggle-btn"
-          aria-label="Mở gợi ý loại đánh giá"
+          aria-label={t('evalTypeToggleAria')}
           onClick={() => setOpen((next) => !next)}
         >
           <Icon.chev/>
@@ -488,11 +469,11 @@ function EvaluationTypeCombobox({ value, onChange, options = [] }) {
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => setOpen(false)}
             >
-              Dùng loại mới: {value.trim()}
+              {t('evalTypeUseNew', { value: value.trim() })}
             </button>
           )}
           {!suggestions.length && !value.trim() && (
-            <div className="combo-empty">Chưa có gợi ý.</div>
+            <div className="combo-empty">{t('evalTypeEmpty')}</div>
           )}
         </div>
       )}
@@ -600,8 +581,8 @@ function collectPhotosFromTree(node) {
         ...ph,
         id: key,
         sourceNodeId: cur.id,
-        sourceName: ownerName || cur.name || 'Mục',
-        label: ph.label || ownerName || cur.name || 'Tài liệu',
+        sourceName: ownerName || cur.name || tGlobal('itemFallback'),
+        label: ph.label || ownerName || cur.name || tGlobal('workKindDocuments'),
       });
     });
     (cur.children || []).forEach((child) => walk(child, child.name || ownerName));
@@ -647,7 +628,7 @@ function NodeDetail({
     && (canOverrideNodeStatus(accessRole) || !nodeHasChildren);
   const canCycleStatus = canEditStatus && typeof onCycleStatus === 'function';
   const { child: addChildLabel, section: childrenLabel } = addChildLabels(listParent || node);
-  const myLabel = levelLabels[depth] || LEVEL_LABEL[depth] || 'Mục';
+  const myLabel = levelLabels[depth] || LEVEL_LABEL[depth] || translate('itemFallback');
   const detailTopLabel = parent
     ? `${LEVEL_LABEL[depth - 1]} · ${parent.name}`
     : [myLabel, node.customerName].filter(Boolean).join(' · ');
@@ -802,7 +783,7 @@ function NodeDetail({
                   className="desktop-entry-preview-more"
                   onClick={() => openEntryModal(kind)}
                 >
-                  +{moreCount} mục khác
+                  {translate('moreItems', { count: moreCount })}
                 </button>
               )}
             </>
@@ -920,7 +901,7 @@ function NodeDetail({
               )}
               {node.issues > 0 && (
                 <span className="chip count has-issue">
-                  <Icon.warn/> {node.issues} lỗi
+                  <Icon.warn/> {translate('issuesCount', { count: node.issues })}
                 </span>
               )}
             </div>
@@ -930,16 +911,16 @@ function NodeDetail({
                   <>
                     <Avatars ids={node.assignees} size="sm" max={3}/>
                     <span className="hero-assignee-text">
-                      {node.assignees.length} người · Thêm
+                      {translate('assigneesMore', { count: node.assignees.length })}
                     </span>
                   </>
                 ) : (
                   <span className="hero-assignee-empty">
-                    <Icon.user/> Giao việc
+                    <Icon.user/> {translate('assignTask')}
                   </span>
                 )}
               </button>
-              <button type="button" className="icon-btn icon-btn--sm" aria-label="Báo">
+              <button type="button" className="icon-btn icon-btn--sm" aria-label={translate('notify')}>
                 <Icon.bell/>
               </button>
             </div>
@@ -949,15 +930,15 @@ function NodeDetail({
             <div className={`node-completion${isNodeDone ? ' node-completion--done' : ''}`}>
               {node.completedAt ? (
                 <>
-                  <span className="work-action-badge">Hoàn thành</span>
+                  <span className="work-action-badge">{translate('workCompleted')}</span>
                   <span className="node-completion-time">
-                    Thời gian hoàn thành: {formatCompletedAt(node.completedAt)}
+                    {translate('completedAtTime', { time: formatCompletedAt(node.completedAt) })}
                   </span>
                 </>
               ) : (
                 <>
                   <p className="node-completion-hint">
-                    Ghi nhận trạng thái hoàn thành và thời điểm kết thúc cho {myLabel.toLowerCase()} này.
+                    {translate('completionHint', { label: myLabel.toLowerCase() })}
                   </p>
                   {showCompleteNodeBtn && (
                     <button
@@ -966,7 +947,7 @@ function NodeDetail({
                       onClick={() => onCompleteNode()}
                     >
                       <Icon.check/>
-                      Hoàn thành
+                      {translate('workComplete')}
                     </button>
                   )}
                 </>
@@ -980,8 +961,8 @@ function NodeDetail({
           )}
           {!subtaskSupported && node._source?.table === 'tasks' && !node._source?.parentTaskId && (
             <p className="field-note" style={{ margin: '0 0 12px', padding: '10px 12px', background: 'var(--warn-soft)', borderRadius: 10 }}>
-              Sub-task cần cột <code>parent_task_id</code> trên Supabase. Chạy file{' '}
-              <code>supabase/migrations/20250525000000_add_parent_task_id.sql</code> rồi tải lại trang.
+              {translate('subtaskMigrationHint')}{' '}
+              <code>supabase/migrations/20250525000000_add_parent_task_id.sql</code>
             </p>
           )}
           {hasChildren && stats.total > 0 && t.showStats !== false && (
@@ -1042,13 +1023,13 @@ function NodeDetail({
             {isAdmin(accessRole) && (
               <div className="field-ops-section">
                 <div className="section-head">
-                  <h3>Lịch đội trên công trình</h3>
+                  <h3>{translate('projectTeamSchedules')}</h3>
                   <button type="button" className="section-action" onClick={() => onOpenTeamSchedule?.(null)}>
-                    + Gán đội
+                    + {translate('assignTeamAction')}
                   </button>
                 </div>
                 {(node.teamSchedules || []).length === 0 ? (
-                  <p className="field-note">Chưa gán đội. Gán đội để hiển thị trên Timeline.</p>
+                  <p className="field-note">{translate('noTeamAssigned')}</p>
                 ) : (
                   <div className="team-schedule-list">
                     {(node.teamSchedules || []).map((s) => (
@@ -1128,7 +1109,7 @@ function NodeDetail({
                   <div className="section-actions">
                     {canAddChild && hasChildren && (
                       <button type="button" className="section-action" onClick={onAddChild}>
-                        + Thêm {addChildLabel}
+                        + {translate('addSectionItem', { label: addChildLabel })}
                       </button>
                     )}
                   </div>
@@ -1181,7 +1162,7 @@ function NodeDetail({
                     fontFamily: 'var(--font-body)',
                   }}
                 >
-                  <Icon.plus/> Thêm {addChildLabel} đầu tiên
+                  <Icon.plus/> {translate('addFirst', { label: addChildLabel })}
                 </button>
               </div>
             )}
@@ -1196,12 +1177,12 @@ function NodeDetail({
             <div className="list">
               <button type="button" onClick={canCycleStatus ? onCycleStatus : undefined} disabled={!canCycleStatus} style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'#fff', border:'1px solid var(--line)', borderRadius:14, cursor: canCycleStatus ? 'pointer' : 'default', opacity: canCycleStatus ? 1 : 0.6, fontFamily:'var(--font-body)', fontSize:13, color:'var(--ink)', textAlign:'left' }}>
                 <Icon.check style={{ color:'var(--good)' }}/>
-                <span style={{flex:1}}>Đổi trạng thái</span>
+                <span style={{flex:1}}>{translate('changeStatus')}</span>
                 <StatusChip status={node.status}/>
               </button>
               <button style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'#fff', border:'1px solid var(--line)', borderRadius:14, cursor:'pointer', fontFamily:'var(--font-body)', fontSize:13, color:'var(--ink)', textAlign:'left' }}>
                 <Icon.warn style={{ color:'var(--bad)' }}/>
-                <span style={{flex:1}}>Báo phát sinh lỗi mới</span>
+                <span style={{flex:1}}>{translate('reportNewIssue')}</span>
                 <Icon.chev style={{color:'var(--muted-2)'}}/>
               </button>
             </div>
@@ -1213,8 +1194,8 @@ function NodeDetail({
 
       {/* FAB */}
       {canAddChild && !embedded && hasChildren && (
-        <button type="button" className="fab" aria-label="Thêm" onClick={onAddChild}>
-          <Icon.plus/> Thêm {addChildLabel}
+        <button type="button" className="fab" aria-label={translate('add')} onClick={onAddChild}>
+          <Icon.plus/> {translate('addSectionItem', { label: addChildLabel })}
         </button>
       )}
     </div>
@@ -1228,16 +1209,11 @@ function personRoleKey(role = '') {
   return 'employee';
 }
 
-function localizedPersonRole(role, locale = 'vi') {
+function localizedPersonRole(role) {
   const key = personRoleKey(role);
-  if (locale === 'en') {
-    if (key === 'admin') return 'Admin';
-    if (key === 'leader') return 'Leaders';
-    return 'Employees';
-  }
-  if (key === 'admin') return 'Admin';
-  if (key === 'leader') return 'Trưởng nhóm';
-  return 'Nhân viên';
+  if (key === 'admin') return tGlobal('roleAdmin');
+  if (key === 'leader') return tGlobal('roleLeader');
+  return tGlobal('roleEmployee');
 }
 
 // ─── People Home ──────────────────────────────────────────────────
@@ -1318,19 +1294,19 @@ function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }
           {localizedPersonRole(p.role, locale)}
         </div>
         <div className="p-stats">
-          <span><b>{stats.total}</b> việc</span>
-          {stats.fail > 0 && <span><b>{stats.fail}</b> lỗi</span>}
-          {stats.overdue > 0 && <span className="has-overdue-text">{stats.overdue} trễ</span>}
+          <span><b>{stats.total}</b> {t('workLower')}</span>
+          {stats.fail > 0 && <span><b>{stats.fail}</b> {t('labelErrors')}</span>}
+          {stats.overdue > 0 && <span className="has-overdue-text">{stats.overdue} {t('lateShort')}</span>}
           {stats.total > 0 && stats.fail === 0 && stats.overdue === 0 && (
-            <span style={{color:'var(--good)'}}>Đúng tiến độ</span>
+            <span style={{color:'var(--good)'}}>{t('onTrack')}</span>
           )}
-          {stats.total === 0 && <span style={{color:'var(--muted-2)'}}>Đang rảnh</span>}
+          {stats.total === 0 && <span style={{color:'var(--muted-2)'}}>{t('availableNow')}</span>}
         </div>
       </div>
       <button
         type="button"
         className="person-card-more icon-btn"
-        aria-label="Tùy chọn nhân sự"
+        aria-label={t('personOptions')}
         onClick={(e) => {
           e.stopPropagation();
           onOpenPersonActions?.(p);
@@ -1392,12 +1368,12 @@ function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }
             <table>
               <thead>
                 <tr>
-                  <th>Nhân sự</th>
-                  <th>Tổng</th>
-                  <th>Chờ</th>
-                  <th>Đang làm</th>
-                  <th>Đạt</th>
-                  <th>Có lỗi</th>
+                  <th>{t('navPeople')}</th>
+                  <th>{t('totalShort')}</th>
+                  <th>{statusMeta.todo.label}</th>
+                  <th>{statusMeta.doing.label}</th>
+                  <th>{statusMeta.done.label}</th>
+                  <th>{statusMeta.fail.label}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1413,7 +1389,7 @@ function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }
                 ))}
                 {tableRows.length === 0 && (
                   <tr>
-                    <td colSpan="6" className="empty-row">Không có nhân sự phù hợp.</td>
+                    <td colSpan="6" className="empty-row">{t('peopleEmptyFilter')}</td>
                   </tr>
                 )}
               </tbody>
@@ -1427,7 +1403,7 @@ function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }
               <div className="people-kanban-head">
                 <div>
                   <div className="people-kanban-title">{column.title}</div>
-                  <div className="people-kanban-sub">{column.items.length} nhân sự</div>
+                  <div className="people-kanban-sub">{t('peopleCountSub', { count: column.items.length })}</div>
                 </div>
                 <span className="people-kanban-count">{column.items.length}</span>
               </div>
@@ -1435,7 +1411,7 @@ function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }
                 {column.items.length > 0 ? (
                   column.items.map(renderPersonCard)
                 ) : (
-                  <div className="people-kanban-empty">Không có nhân sự ở vị trí này.</div>
+                  <div className="people-kanban-empty">{t('peopleEmptyRole')}</div>
                 )}
               </div>
             </section>
@@ -1444,7 +1420,7 @@ function PeopleHome({ products, onOpenPerson, onAddPerson, onOpenPersonActions }
 
         <div className="people-list">
           {filtered.length === 0 && (
-            <div className="empty">Không tìm thấy nhân sự nào.</div>
+            <div className="empty">{t('peopleEmptySearch')}</div>
           )}
           {filtered.map(renderPersonCard)}
         </div>
@@ -1566,7 +1542,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
   if (!person) return null;
 
   return (
-    <div className="screen has-nav">
+    <div className={`screen has-nav screen--person ${isMe ? 'screen--me' : ''}`}>
       <div className={`topbar ${scrolled ? 'scrolled' : ''}`}>
         <button className="icon-btn" onClick={onBack} aria-label={t('back')}><Icon.back/></button>
         <div className="title-wrap">
@@ -1581,9 +1557,11 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
             </svg>
           </button>
         )}
-        <button className="icon-btn" aria-label={t('call')}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 4h4l2 5-3 2a11 11 0 005 5l2-3 5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
-        </button>
+        {!isMe && (
+          <button className="icon-btn" aria-label={t('call')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 4h4l2 5-3 2a11 11 0 005 5l2-3 5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+          </button>
+        )}
         <button className="icon-btn" aria-label={t('editPerson')} onClick={() => onEditPerson?.(person)}>
           <Icon.edit/>
         </button>
@@ -1615,7 +1593,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
         </div>
 
         {/* Contact strip */}
-        <div style={{ display:'flex', gap:8, padding:'0 16px 14px' }}>
+        {!isMe && <div style={{ display:'flex', gap:8, padding:'0 16px 14px' }}>
           <button style={{ flex:1, height:40, borderRadius:10, background:'var(--ink)', color:'#fff', border:0, fontWeight:600, fontSize:13, cursor:'pointer', fontFamily:'var(--font-body)', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6l9 6 9-6M3 6v12h18V6M3 6h18" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
             {t('message')}
@@ -1626,16 +1604,34 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
           <button style={{ width:40, height:40, borderRadius:10, background:'#fff', border:'1px solid var(--line)', cursor:'pointer', display:'grid', placeItems:'center' }}>
             <Icon.cal/>
           </button>
-        </div>
+        </div>}
+
+        {isMe && onOpenSettings && (
+          <div className="me-settings-wrap">
+            <button type="button" className="me-settings-entry" onClick={onOpenSettings}>
+              <span className="me-settings-entry-icon" aria-hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8"/>
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                </svg>
+              </span>
+              <span className="me-settings-entry-text">
+                <strong>{t('navSettings')}</strong>
+                <span>{t('settingsLanguageEntry')} · {t('settingsLanguageEntryHint')}</span>
+              </span>
+              <span className="me-settings-entry-chevron" aria-hidden>›</span>
+            </button>
+          </div>
+        )}
 
         {/* Toggle group */}
-        <div style={{ padding:'4px 16px 8px' }}>
+        <div className="person-work-section" style={{ padding:'4px 16px 8px' }}>
           <div className="section-title" style={{padding:0, marginBottom: 8}}>
             {isMe ? t('myAssignedSubtasks') : t('assignedWork')} · {items.length}
           </div>
           {isMe && items.length > 0 && (
             <div className="my-work-controls">
-              <div className="my-status-filter" aria-label="Lọc theo trạng thái">
+              <div className="my-status-filter" aria-label={t('filterByStatus')}>
                 {statusFilterOptions.map((option) => (
                   <button
                     key={option.key}
@@ -1654,7 +1650,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                   className="btn btn-secondary"
                   onClick={allSubtasksSelected ? clearSelectedSubtasks : selectAllSubtasks}
                 >
-                  {allSubtasksSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                  {allSubtasksSelected ? t('productsDeselectAllVisible') : t('selectAll')}
                 </button>
                 <button
                   type="button"
@@ -1662,7 +1658,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                   disabled={selectedSubtaskItems.length === 0}
                   onClick={() => printSubtaskReport({ person, items: selectedSubtaskItems })}
                 >
-                  In ({selectedSubtaskItems.length})
+                  {t('printCount', { count: selectedSubtaskItems.length })}
                 </button>
               </div>
             </div>
@@ -1679,7 +1675,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                 cursor:'pointer', whiteSpace:'nowrap',
                 boxShadow: groupBy==='product' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
               }}
-            >Theo dự án</button>
+            >{t('groupByProject')}</button>
             <button
               onClick={() => setGroupBy('status')}
               style={{
@@ -1690,7 +1686,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                 cursor:'pointer', whiteSpace:'nowrap',
                 boxShadow: groupBy==='status' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
               }}
-            >Theo trạng thái</button>
+            >{t('groupByStatus')}</button>
           </div>
           )}
         </div>
@@ -1698,7 +1694,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
         <div className={isMe ? 'my-kanban-board-wrap' : ''} style={{ padding: '0 16px 110px' }}>
           {(!isMe && grouped.length === 0) && (
             <div className="empty">
-              Không có việc nào đang phụ trách.
+              {t('noAssignedWork')}
             </div>
           )}
           <div className={isMe ? 'my-kanban-board' : ''}>
@@ -1729,7 +1725,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
               </div>
               <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
                 {isMe && g.items.length === 0 && (
-                  <div className="my-kanban-empty">Không có sub-task.</div>
+                  <div className="my-kanban-empty">{t('noSubtasksShort')}</div>
                 )}
                 {g.items.map((it, i) => {
                   const { node, productName, customerName, parentName, featureName, parentTaskName } = it;
@@ -1755,7 +1751,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                           toggleSubtaskSelection(node.id);
                         }}
                         aria-pressed={selected}
-                        aria-label={`${selected ? 'Bỏ chọn' : 'Chọn'} sub-task ${node.name}`}
+                        aria-label={`${selected ? t('deselect') : t('select')} sub-task ${node.name}`}
                       >
                         {selected && <Icon.check/>}
                       </button>
@@ -1791,7 +1787,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
                       <button
                         type="button"
                         className="icon-btn"
-                        aria-label={`Sửa ${node.name}`}
+                        aria-label={`${t('edit')} ${node.name}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenActions(node);
@@ -1818,6 +1814,7 @@ function PersonDetail({ personId, products, onBack, onOpenNode, onOpenActions, o
 
 // ─── Bottom Nav ───────────────────────────────────────────────────
 function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
+  const { t, statusMeta } = useI18n();
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [assigneeId, setAssigneeId] = useState('all');
@@ -1873,7 +1870,7 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
             <img src={APP_LOGO} alt="" className="subtasks-brand-logo" />
             <span>Team work</span>
           </div>
-          <h1>Bảng tổng hợp công việc toàn team</h1>
+          <h1>{t('subtasksBoardTitle')}</h1>
         </div>
         <div className="subtasks-topbar-actions">
           <button
@@ -1882,9 +1879,9 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
             onClick={() => setFiltersOpen((open) => !open)}
             aria-expanded={filtersOpen}
           >
-            Lọc
+            {t('filter')}
           </button>
-          <button type="button" className="btn btn-secondary subtasks-reset-btn" onClick={resetFilters} aria-label="Xóa lọc">
+          <button type="button" className="btn btn-secondary subtasks-reset-btn" onClick={resetFilters} aria-label={t('clearFilters')}>
             <Icon.close/>
           </button>
         </div>
@@ -1892,45 +1889,45 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
 
       <div className="scroll subtasks-scroll">
         <div className="subtasks-summary">
-          <div className="subtasks-summary-card"><div className="num">{totals.projects}</div><div className="lbl">Dự án</div></div>
-          <div className="subtasks-summary-card"><div className="num">{totals.tasks}</div><div className="lbl">Task chính</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.projects}</div><div className="lbl">{t('levelProject')}</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.tasks}</div><div className="lbl">{t('mainTasks')}</div></div>
           <div className="subtasks-summary-card"><div className="num">{totals.subtasks}</div><div className="lbl">Sub task</div></div>
-          <div className="subtasks-summary-card"><div className="num">{totals.progress.pct}%</div><div className="lbl">Tiến độ chung</div></div>
-          <div className="subtasks-summary-card"><div className="num">{totals.byStatus.doing}</div><div className="lbl">Đang làm</div></div>
-          <div className="subtasks-summary-card"><div className="num">{totals.byStatus.fail}</div><div className="lbl">Đang vướng</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.progress.pct}%</div><div className="lbl">{t('overallProgress')}</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.byStatus.doing}</div><div className="lbl">{t('statusDoing')}</div></div>
+          <div className="subtasks-summary-card"><div className="num">{totals.byStatus.fail}</div><div className="lbl">{t('stuck')}</div></div>
         </div>
 
         {filtersOpen && (
           <div className="subtasks-filters">
             <div className="field">
-              <label className="field-label" htmlFor="subtask-date-from">Hoàn thành từ ngày</label>
+              <label className="field-label" htmlFor="subtask-date-from">{t('completedFromDate')}</label>
               <input id="subtask-date-from" className="field-input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div className="field">
-              <label className="field-label" htmlFor="subtask-date-to">Đến ngày</label>
+              <label className="field-label" htmlFor="subtask-date-to">{t('toDate')}</label>
               <input id="subtask-date-to" className="field-input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
             <div className="field">
-              <label className="field-label" htmlFor="subtask-assignee">Nhân sự</label>
+              <label className="field-label" htmlFor="subtask-assignee">{t('navPeople')}</label>
               <select id="subtask-assignee" className="field-input" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-                <option value="all">Tất cả nhân sự</option>
+                <option value="all">{t('allPeople')}</option>
                 {PEOPLE.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
             <div className="field">
-              <label className="field-label" htmlFor="subtask-project">Dự án</label>
+              <label className="field-label" htmlFor="subtask-project">{t('levelProject')}</label>
               <select id="subtask-project" className="field-input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="all">Tất cả dự án</option>
+                <option value="all">{t('allProjects')}</option>
                 {projectOptions.map((p) => (
                   <option key={p.id} value={p.id}>{[p.customerName, p.name].filter(Boolean).join(' · ')}</option>
                 ))}
               </select>
             </div>
             <div className="field">
-              <label className="field-label" htmlFor="subtask-status">Trạng thái</label>
+              <label className="field-label" htmlFor="subtask-status">{t('status')}</label>
               <select id="subtask-status" className="field-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="all">Tất cả trạng thái</option>
-                {Object.entries(STATUS_META).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
+                <option value="all">{t('allStatuses')}</option>
+                {Object.entries(statusMeta).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
               </select>
             </div>
           </div>
@@ -1938,21 +1935,21 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
 
         <div className="subtasks-table-wrap">
           {filtered.length === 0 ? (
-            <div className="empty">Không có sub-task phù hợp bộ lọc.</div>
+            <div className="empty">{t('emptySubtasksFilter')}</div>
           ) : (
             <table className="subtasks-table">
               <thead>
                 <tr>
-                  <th>Dự án</th>
-                  <th>Hạng mục</th>
-                  <th>Công việc</th>
+                  <th>{t('levelProject')}</th>
+                  <th>{t('levelFeature')}</th>
+                  <th>{t('levelTask')}</th>
                   <th>Sub task</th>
-                  <th>Người phụ trách</th>
-                  <th>Ưu tiên</th>
+                  <th>{t('assignee')}</th>
+                  <th>{t('priority')}</th>
                   <th>Deadline</th>
-                  <th>Tiến độ công việc</th>
-                  <th>Thời gian làm</th>
-                  <th>Trạng thái</th>
+                  <th>{t('taskProgress')}</th>
+                  <th>{t('timeSpent')}</th>
+                  <th>{t('status')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1965,18 +1962,18 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
                     : (it.node.status === 'done' || it.node.completedAt ? 100 : 0);
                   return (
                     <tr key={it.node.id} className="subtasks-card-row" onClick={() => onOpenNode(it.node.id)}>
-                      <td className="subtasks-card-project" data-label="Dự án"><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
-                      <td className="subtasks-card-feature" data-label="Hạng mục"><div className="subtasks-table-title">{it.featureName || 'Chưa có hạng mục'}</div></td>
-                      <td className="subtasks-card-task" data-label="Công việc"><div className="subtasks-table-title">{it.parentTaskName || 'Chưa có công việc'}</div></td>
-                      <td className="subtasks-card-subtask" data-label="Sub task"><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">Hoàn thành: {formatCompletedAt(it.node.completedAt)}</div>}</td>
-                      <td className="subtasks-card-assignee" data-label="Người phụ trách">{assignees || 'Chưa gán'}</td>
-                      <td className="subtasks-card-priority" data-label="Ưu tiên"><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
-                      <td className="subtasks-card-deadline" data-label="Deadline"><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel="Chưa có" /></td>
-                      <td className="subtasks-card-progress" data-label="Tiến độ">
+                      <td className="subtasks-card-project" data-label={t('levelProject')}><div>{it.productName}</div>{it.customerName && <div className="subtasks-table-sub">{it.customerName}</div>}</td>
+                      <td className="subtasks-card-feature" data-label={t('levelFeature')}><div className="subtasks-table-title">{it.featureName || t('noFeatureYet')}</div></td>
+                      <td className="subtasks-card-task" data-label={t('levelTask')}><div className="subtasks-table-title">{it.parentTaskName || t('noParentTask')}</div></td>
+                      <td className="subtasks-card-subtask" data-label="Sub task"><div className="subtasks-table-title">{it.node.name}</div>{it.node.completedAt && <div className="subtasks-table-sub">{t('workCompleted')}: {formatCompletedAt(it.node.completedAt)}</div>}</td>
+                      <td className="subtasks-card-assignee" data-label={t('assignee')}>{assignees || t('unassigned')}</td>
+                      <td className="subtasks-card-priority" data-label={t('priority')}><span className={`priority-chip priority-chip--${priority.tone}`}>{priority.label}</span></td>
+                      <td className="subtasks-card-deadline" data-label="Deadline"><DeadlineChip iso={it.node.deadline} status={it.node.status} emptyLabel={t('deadlineNone')} /></td>
+                      <td className="subtasks-card-progress" data-label={t('progress')}>
                         <div className="task-progress-cell">
                           <div className="task-progress-text">{subtaskPct}%</div>
                           <div className="task-progress-track"><span style={{ width: `${subtaskPct}%` }} /></div>
-                          <div className="subtasks-table-sub">Riêng subtask này</div>
+                          <div className="subtasks-table-sub">{t('subtaskOwnPct')}</div>
                           {typeof onEditGoodsPercent === 'function' && (
                             <button
                               type="button"
@@ -1986,13 +1983,13 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
                                 onEditGoodsPercent(it.node);
                               }}
                             >
-                              <Icon.edit/> Tỉ lệ hoàn thành
+                              <Icon.edit/> {t('goodsPercentTitle')}
                             </button>
                           )}
                         </div>
                       </td>
-                      <td className="subtasks-card-time" data-label="Thời gian">{formatDurationMinutes(mins) || '0 phút'}</td>
-                      <td className="subtasks-card-status" data-label="Trạng thái"><StatusChip status={it.node.status}/></td>
+                      <td className="subtasks-card-time" data-label={t('duration')}>{formatDurationMinutes(mins) || `0 ${t('minutes')}`}</td>
+                      <td className="subtasks-card-status" data-label={t('status')}><StatusChip status={it.node.status}/></td>
                     </tr>
                   );
                 })}
@@ -2008,24 +2005,27 @@ function SubtasksDashboard({ products, onOpenNode, onEditGoodsPercent }) {
 function BottomNav({ tab, onChange, alertCount }) {
   const { t } = useI18n();
   const items = [
-    { id: 'products', label: t('navProducts'), icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/></svg>
+    { id: 'products', label: t('navProductsShort'), icon: (
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8"/></svg>
     ) },
-    { id: 'subtasks', label: t('navSubtasks'), icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M7 6h14M7 12h14M7 18h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    { id: 'subtasks', label: t('navSubtasksShort'), icon: (
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M7 6h14M7 12h14M7 18h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
     ) },
     { id: 'schedule', label: t('navScheduleShort'), icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ) },
-    { id: 'attendance', label: t('navAttendance'), icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="3.5" width="16" height="17" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M8 2.5v4M16 2.5v4M4 8.5h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M8 13l2.3 2.3L16 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    { id: 'attendance', label: t('navAttendanceShort'), icon: (
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="4" y="3.5" width="16" height="17" rx="2" stroke="currentColor" strokeWidth="1.8"/><path d="M8 2.5v4M16 2.5v4M4 8.5h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M8 13l2.3 2.3L16 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
     ) },
     { id: 'people', label: t('navPeople'), icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><circle cx="17" cy="9.5" r="2.5" stroke="currentColor" strokeWidth="1.8"/><path d="M3 19a6 6 0 0112 0M14 18a5 5 0 017 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><circle cx="17" cy="9.5" r="2.5" stroke="currentColor" strokeWidth="1.8"/><path d="M3 19a6 6 0 0112 0M14 18a5 5 0 017 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ) },
     { id: 'me', label: t('navMe'), icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><path d="M4.5 20a7.5 7.5 0 0115 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/><path d="M4.5 20a7.5 7.5 0 0115 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
     ), badge: alertCount },
+    { id: 'settings', label: t('navSettingsShort'), icon: (
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+    ) },
   ];
   return (
     <div className="bottom-nav">
@@ -2061,9 +2061,10 @@ function StatusChoiceGroup({
   note = null,
   className = '',
 }) {
+  const { t, statusMeta } = useI18n();
   return (
-    <div className={`status-choice-group ${className}`.trim()} role="group" aria-label="Đổi trạng thái">
-      {Object.entries(STATUS_META).map(([key, meta]) => (
+    <div className={`status-choice-group ${className}`.trim()} role="group" aria-label={t('changeStatus')}>
+      {Object.entries(statusMeta).map(([key, meta]) => (
         <button
           key={key}
           type="button"
@@ -2185,7 +2186,7 @@ function ProductCard({
             }}
           >
             <Icon.user/>
-            {locationSaving ? 'Đang lấy GPS...' : product.siteLocation ? 'Cập nhật vị trí' : 'Vị trí'}
+            {locationSaving ? t('checkInGpsLoading') : product.siteLocation ? t('updateLocation') : t('locationShort')}
           </button>
         )}
       </div>
@@ -2457,8 +2458,8 @@ function ProductsHome({
       </div>
 
       {!panel && (
-        <button className="fab" aria-label={t('addProject')} onClick={onAddProduct}>
-          <Icon.plus/> {t('addProject')}
+        <button className="fab product-add-fab" aria-label={t('addProject')} onClick={onAddProduct}>
+          <Icon.plus/> <span className="product-add-fab-label">{t('addProject')}</span>
         </button>
       )}
     </div>
@@ -2564,6 +2565,7 @@ function ProjectDesktopDashboard({
   onSetStatus,
   canEditStatus = false,
 }) {
+  const { t } = useI18n();
   const stats = aggregate(project);
   const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
   const data = useMemo(() => collectProjectDashboardRows(project), [project]);
@@ -2588,42 +2590,42 @@ function ProjectDesktopDashboard({
   });
   const kpiCards = [
     {
-      label: 'Tiến độ',
+      label: t('progress'),
       value: `${pct}%`,
-      sub: `${stats.done}/${stats.total} mục xong`,
+      sub: t('itemsDone', { done: stats.done, total: stats.total }),
       tone: 'green',
       chart: 'donut',
       percent: pct,
     },
     {
-      label: 'Hạng mục',
+      label: t('levelFeature'),
       value: data.features.length,
-      sub: 'module trong dự án',
+      sub: t('modulesInProject'),
       tone: 'blue',
       chart: 'bars',
       bars: featureBars,
     },
     {
-      label: 'Công việc',
+      label: t('levelTask'),
       value: data.tasks.length,
-      sub: `${data.subtasks.length} subtask`,
+      sub: t('subtasksCount', { count: data.subtasks.length }),
       tone: 'ink',
       chart: 'stack',
       values: [data.tasks.length, data.subtasks.length],
       max: Math.max(data.tasks.length, data.subtasks.length, 1),
     },
     {
-      label: 'Subtask xong',
+      label: t('subtasksDoneLabel'),
       value: `${doneSubtasks}/${data.subtasks.length}`,
-      sub: `${manualSubtaskPct.length} thẻ có % riêng`,
+      sub: t('manualPctCards', { count: manualSubtaskPct.length }),
       tone: 'green',
       chart: 'donut',
       percent: data.subtasks.length ? Math.round((doneSubtasks / data.subtasks.length) * 100) : 0,
     },
     {
-      label: 'Đang vướng',
+      label: t('stuck'),
       value: issueCount,
-      sub: 'lỗi hoặc trễ hạn',
+      sub: t('stuckSub'),
       tone: 'red',
       chart: 'bars',
       bars: [stats.fail, data.attention.length].map((value) => (
@@ -2631,25 +2633,25 @@ function ProjectDesktopDashboard({
       )),
     },
     {
-      label: 'Nhân sự',
+      label: t('navPeople'),
       value: data.assignees.length,
-      sub: 'người liên quan',
+      sub: t('peopleInvolved'),
       tone: 'purple',
       chart: 'dots',
       count: Math.min(data.assignees.length, 8),
     },
     {
       label: 'Checklist',
-      value: formatDurationMinutes(checklistMinutes) || '0 phút',
-      sub: 'thời gian thao tác',
+      value: formatDurationMinutes(checklistMinutes) || `0 ${t('minutes')}`,
+      sub: t('checklistTime'),
       tone: 'amber',
       chart: 'meter',
       percent: Math.min(100, Math.round((checklistMinutes / 480) * 100)),
     },
     {
-      label: 'Chấm công GPS',
-      value: formatDurationMinutes(attendanceMinuteTotal) || '0 phút',
-      sub: `${attendanceSessions.length} ca`,
+      label: t('gpsAttendance'),
+      value: formatDurationMinutes(attendanceMinuteTotal) || `0 ${t('minutes')}`,
+      sub: t('sessionsCount', { count: attendanceSessions.length }),
       tone: 'blue',
       chart: attendanceBars.length ? 'bars' : 'meter',
       bars: attendanceBars,
@@ -2661,18 +2663,18 @@ function ProjectDesktopDashboard({
     <div className="project-dashboard">
       <div className="project-dashboard-hero">
         <div className="project-dashboard-title-block">
-          <div className="project-dashboard-eyebrow">Dashboard dự án</div>
+          <div className="project-dashboard-eyebrow">{t('projectDashboard')}</div>
           <h1>{project.name}</h1>
           <div className="project-dashboard-meta">
             {project.customerName && <span>{project.customerName}</span>}
             <StatusChip status={project.status}/>
-            <DeadlineChip iso={project.deadline} status={project.status} emptyLabel="Chưa có deadline"/>
+            <DeadlineChip iso={project.deadline} status={project.status} emptyLabel={t('noDeadline')}/>
           </div>
         </div>
         <div className="project-dashboard-actions">
           {typeof onOpenActions === 'function' && (
             <button type="button" className="btn btn-secondary" onClick={() => onOpenActions(project)}>
-              <Icon.more/> Tùy chọn
+              <Icon.more/> {t('options')}
             </button>
           )}
           {typeof onOpenSiteSettings === 'function' && (
@@ -2682,17 +2684,17 @@ function ProjectDesktopDashboard({
           )}
           {typeof onOpenTeamSchedule === 'function' && (
             <button type="button" className="btn btn-secondary" onClick={() => onOpenTeamSchedule(null)}>
-              <Icon.cal/> Lịch đội
+              <Icon.cal/> {t('navSchedule')}
             </button>
           )}
           {typeof onOpenAssignees === 'function' && (
             <button type="button" className="btn btn-secondary" onClick={() => onOpenAssignees(project)}>
-              <Icon.plus/> Thêm nhân sự
+              <Icon.plus/> {t('addPeople')}
             </button>
           )}
           {typeof onAddFeature === 'function' && (
             <button type="button" className="btn btn-primary" onClick={() => onAddFeature(project)}>
-              <Icon.plus/> Thêm hạng mục
+              <Icon.plus/> {t('addSectionItem', { label: t('levelFeature').toLowerCase() })}
             </button>
           )}
         </div>
@@ -2700,14 +2702,14 @@ function ProjectDesktopDashboard({
 
       <div className="project-dashboard-grid">
         {[
-          ['Tiến độ', `${pct}%`, `${stats.done}/${stats.total} mục xong`],
-          ['Hạng mục', data.features.length, 'module trong dự án'],
-          ['Công việc', data.tasks.length, `${data.subtasks.length} subtask`],
-          ['Subtask xong', `${doneSubtasks}/${data.subtasks.length}`, `${manualSubtaskPct.length} thẻ có % riêng`],
-          ['Đang vướng', stats.fail || data.attention.length, 'lỗi hoặc trễ hạn'],
-          ['Nhân sự', data.assignees.length, 'người liên quan'],
-          ['Checklist', formatDurationMinutes(Math.round(data.checklistMinutes)) || '0 phút', 'thời gian thao tác'],
-          ['Chấm công GPS', formatDurationMinutes(Math.round(attendanceMinutes)) || '0 phút', `${(project.attendanceSessions || []).length} ca`],
+          [t('progress'), `${pct}%`, t('itemsDone', { done: stats.done, total: stats.total })],
+          [t('levelFeature'), data.features.length, t('modulesInProject')],
+          [t('levelTask'), data.tasks.length, t('subtasksCount', { count: data.subtasks.length })],
+          [t('subtasksDoneLabel'), `${doneSubtasks}/${data.subtasks.length}`, t('manualPctCards', { count: manualSubtaskPct.length })],
+          [t('stuck'), stats.fail || data.attention.length, t('stuckSub')],
+          [t('navPeople'), data.assignees.length, t('peopleInvolved')],
+          ['Checklist', formatDurationMinutes(Math.round(data.checklistMinutes)) || `0 ${t('minutes')}`, t('checklistTime')],
+          [t('gpsAttendance'), formatDurationMinutes(Math.round(attendanceMinutes)) || `0 ${t('minutes')}`, t('sessionsCount', { count: (project.attendanceSessions || []).length })],
         ].map(([label, value, sub]) => (
           <div key={label} className="project-dashboard-card">
             <div className="project-dashboard-card-label">{label}</div>
@@ -2721,13 +2723,13 @@ function ProjectDesktopDashboard({
         <section className="project-dashboard-section project-dashboard-section--wide">
           <div className="project-dashboard-section-head">
             <div>
-              <h2>Tiến độ theo hạng mục</h2>
-              <p>{data.features.length} hạng mục trong dự án</p>
+              <h2>{t('progressByModule')}</h2>
+              <p>{t('modulesInProjectCount', { count: data.features.length })}</p>
             </div>
           </div>
           <div className="project-dashboard-feature-list">
             {data.features.length === 0 ? (
-              <div className="empty">Chưa có hạng mục.</div>
+              <div className="empty">{t('noFeatures')}</div>
             ) : data.features.map((feature) => {
               const featureStats = aggregate(feature);
               const featurePct = featureStats.total ? Math.round((featureStats.done / featureStats.total) * 100) : 0;
@@ -2741,7 +2743,7 @@ function ProjectDesktopDashboard({
                 >
                   <div className="project-dashboard-feature-main">
                     <span>{feature.name}</span>
-                    <small>{(feature.children || []).length} công việc · {featureSubtasks.length} subtask</small>
+                    <small>{t('featureSub', { tasks: (feature.children || []).length, subtasks: featureSubtasks.length })}</small>
                   </div>
                   <div className="project-dashboard-feature-progress">
                     <div className="project-dashboard-progress-track"><span style={{ width: `${featurePct}%` }} /></div>
@@ -2756,13 +2758,13 @@ function ProjectDesktopDashboard({
         <section className="project-dashboard-section">
           <div className="project-dashboard-section-head">
             <div>
-              <h2>Cần chú ý</h2>
-              <p>Lỗi, trễ hạn hoặc sắp tới hạn</p>
+              <h2>{t('needsAttention')}</h2>
+              <p>{t('attentionSub')}</p>
             </div>
           </div>
           <div className="project-dashboard-attention-list">
             {attentionRows.length === 0 ? (
-              <div className="empty">Không có mục cần chú ý.</div>
+              <div className="empty">{t('noAttention')}</div>
             ) : attentionRows.map(({ node, feature, parentTask, tone }) => (
               <button
                 key={node.id}
@@ -2772,10 +2774,10 @@ function ProjectDesktopDashboard({
               >
                 <div>
                   <span>{node.name}</span>
-                  <small>{[feature?.name, parentTask?.name].filter(Boolean).join(' · ') || 'Dự án'}</small>
+                  <small>{[feature?.name, parentTask?.name].filter(Boolean).join(' · ') || t('levelProject')}</small>
                 </div>
                 <span className={`project-dashboard-tone project-dashboard-tone--${tone || node.status}`}>
-                  {node.status === 'fail' ? 'Vướng' : formatDeadline(node.deadline)}
+                  {node.status === 'fail' ? t('stuckShort') : formatDeadline(node.deadline)}
                 </span>
               </button>
             ))}
@@ -2785,8 +2787,8 @@ function ProjectDesktopDashboard({
         <section className="project-dashboard-section">
           <div className="project-dashboard-section-head">
             <div>
-              <h2>Nhân sự</h2>
-              <p>{data.assignees.length} người được gán</p>
+              <h2>{t('navPeople')}</h2>
+              <p>{t('peopleAssigned', { count: data.assignees.length })}</p>
             </div>
           </div>
           <div className="project-dashboard-people">
@@ -2794,11 +2796,11 @@ function ProjectDesktopDashboard({
               const person = PEOPLE.find((p) => p.id === idOrName || p.name === idOrName);
               return <span key={idOrName}>{person?.name || idOrName}</span>;
             })}
-            {data.assignees.length === 0 && <div className="empty">Chưa gán nhân sự.</div>}
+            {data.assignees.length === 0 && <div className="empty">{t('noPeopleAssigned')}</div>}
             <div style={{ marginTop: 12 }}>
               {typeof onOpenAssignees === 'function' && (
                 <button type="button" className="btn btn-secondary" onClick={() => onOpenAssignees(project)}>
-                  <Icon.plus/> Thêm nhân sự
+                  <Icon.plus/> {t('addPeople')}
                 </button>
               )}
             </div>
@@ -2814,6 +2816,7 @@ function DesktopProductsSplit({
   openProduct, openChild, back, openNodeActions, onAddChild, onAddFeature, currentUserId,
   onCompleteNode, ...detailProps
 }) {
+  const { t: translate } = useI18n();
   const [selectedAsideSubtaskIds, setSelectedAsideSubtaskIds] = useState(() => new Set());
   const [selectedMainSubtaskIds, setSelectedMainSubtaskIds] = useState(() => new Set());
   const shouldKeepFeatureTaskList = currentNode?._source?.table === 'tasks'
@@ -2821,7 +2824,7 @@ function DesktopProductsSplit({
     && parentNode?._source?.table === 'features';
   const listParent = shouldKeepFeatureTaskList ? parentNode : resolveListParent(currentNode, parentNode);
   const listItems = listParent?.children || [];
-  const listLabel = addChildLabels(listParent).section || LEVEL_LABEL[depth] || 'Mục';
+  const listLabel = addChildLabels(listParent).section || LEVEL_LABEL[depth] || translate('itemFallback');
   const activeId = currentNode?.id;
   const showAsideAdd = listParent && canAddChildren(listParent);
   const asideAddLabel = addChildLabels(listParent).child;
@@ -2839,8 +2842,8 @@ function DesktopProductsSplit({
   const showMainSubtaskPanel = currentNode?._source?.table === 'features'
     || (currentNode?._source?.table === 'tasks' && !currentNode?._source?.parentTaskId);
   const mainSubtaskTitle = currentNode?._source?.table === 'features'
-    ? 'Tất cả sub-task'
-    : `Sub-task của ${currentNode?.name || 'công việc'}`;
+    ? translate('allSubtasksTitle')
+    : translate('subtasksOf', { name: currentNode?.name || translate('levelTask').toLowerCase() });
   const isAsideSubtaskList = listParent?._source?.table === 'tasks'
     && listItems.some((item) => item._source?.parentTaskId);
   const featureNameById = useMemo(() => {
@@ -2970,7 +2973,7 @@ function DesktopProductsSplit({
         ) : (
           <div className="screen screen--panel">
             <div className="topbar topbar--panel">
-              <button type="button" className="icon-btn" onClick={back} aria-label="Quay lại">
+              <button type="button" className="icon-btn" onClick={back} aria-label={translate('back')}>
                 <Icon.back/>
               </button>
               <div className="title-wrap">
@@ -2986,7 +2989,7 @@ function DesktopProductsSplit({
                     className="btn btn-secondary"
                     onClick={allAsideSubtasksSelected ? clearAsideSubtasks : selectAllAsideSubtasks}
                   >
-                    {allAsideSubtasksSelected ? 'Bỏ chọn' : 'Chọn tất cả'}
+                    {allAsideSubtasksSelected ? translate('deselectAll') : translate('selectAll')}
                   </button>
                   <button
                     type="button"
@@ -2994,7 +2997,7 @@ function DesktopProductsSplit({
                     disabled={selectedAsideSubtaskItems.length === 0}
                     onClick={() => printSubtaskReport({ person: null, items: selectedAsideSubtaskItems })}
                   >
-                    In ({selectedAsideSubtaskItems.length})
+                    {translate('printCount', { count: selectedAsideSubtaskItems.length })}
                   </button>
                 </div>
               )}
@@ -3007,13 +3010,13 @@ function DesktopProductsSplit({
                   >
                     <span className="desktop-all-subtasks-icon"><Icon.check/></span>
                     <span className="desktop-all-subtasks-text">
-                      <span>Tất cả</span>
-                      <span>{allFeatureSubtasks.length} sub-task</span>
+                      <span>{translate('all')}</span>
+                      <span>{translate('subtaskCountLabel', { count: allFeatureSubtasks.length })}</span>
                     </span>
                   </button>
                 )}
                 {listItems.length === 0 && (
-                  <div className="empty">Chưa có mục con.</div>
+                  <div className="empty">{translate('noChildren')}</div>
                 )}
                 {listItems.map((child) => {
                   const selected = selectedAsideSubtaskIds.has(child.id);
@@ -3031,7 +3034,7 @@ function DesktopProductsSplit({
                             toggleAsideSubtaskSelection(child.id);
                           }}
                           aria-pressed={selected}
-                          aria-label={`${selected ? 'Bỏ chọn' : 'Chọn'} sub-task ${child.name}`}
+                          aria-label={`${selected ? translate('deselect') : translate('select')} sub-task ${child.name}`}
                         >
                           {selected && <Icon.check/>}
                         </button>
@@ -3053,7 +3056,7 @@ function DesktopProductsSplit({
             {showAsideAdd && onAddChild && (
               <div className="desktop-split-aside-foot desktop-split-aside-foot--stack">
                 <button type="button" className="btn btn-primary btn-block" onClick={() => onAddChild(listParent)}>
-                  <Icon.plus/> Thêm {asideAddLabel}
+                  <Icon.plus/> {translate('addSectionItem', { label: asideAddLabel })}
                 </button>
               </div>
             )}
@@ -3119,9 +3122,9 @@ function DesktopProductsSplit({
           />
         ) : (
           <div className="desktop-split-empty">
-            <p style={{ color: 'var(--muted)', marginBottom: 12 }}>Không tìm thấy mục trong đường dẫn.</p>
+            <p style={{ color: 'var(--muted)', marginBottom: 12 }}>{translate('notFoundInPath')}</p>
             <button type="button" className="btn btn-secondary" onClick={back}>
-              Quay lại
+              {translate('back')}
             </button>
           </div>
         )}
@@ -3255,7 +3258,7 @@ function WorkActionSheet({
       await onSave(entry);
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
@@ -3280,7 +3283,7 @@ function WorkActionSheet({
         await onComplete(completeWorkAction(entry));
         onClose();
       } catch (e) {
-        setErr(e.message || 'Không lưu được');
+        setErr(e.message || t('errSaveFailed'));
       } finally {
         setSaving(false);
       }
@@ -3329,7 +3332,7 @@ function WorkActionSheet({
           <>
             {kind === 'evaluation' && (
               <div className="field">
-                <label className="field-label" htmlFor="work-evaluation-type">Loại Đánh giá</label>
+                <label className="field-label" htmlFor="work-evaluation-type">{t('evaluationTypeLabel')}</label>
                 <EvaluationTypeCombobox
                   value={evaluationType}
                   onChange={setEvaluationType}
@@ -3385,7 +3388,7 @@ function WorkActionSheet({
               time={startTime}
               onDateChange={setStartDate}
               onTimeChange={setStartTime}
-              note="Bấm «Bây giờ» để lấy thời điểm hiện tại."
+              note={t('nowHint')}
             />
             <div className="btn-row btn-row--tight">
               <button type="button" className="btn btn-secondary btn-sm" onClick={stampNowStart}>
@@ -3437,11 +3440,11 @@ function WorkActionSheet({
                   await onDelete();
                   onClose();
                 } catch (e) {
-                  setErr(e.message || 'Không xóa được');
+                  setErr(e.message || t('errDeleteFailed'));
                   setSaving(false);
                 }
               }}
-              aria-label="Xóa hành động"
+              aria-label={t('deleteActionAria')}
             >
               <Icon.trash/>
             </button>
@@ -3456,6 +3459,7 @@ function WorkActionSheet({
 function PhotoSheet({
   photo, onClose, onUpdatePhoto, onDeletePhoto, onAddFiles, canEdit = true, viewOnly = false,
 }) {
+  const { t } = useI18n();
   const [cap, setCap] = useState(photo ? photo.label : '');
   const [isBad, setIsBad] = useState(photo?.kind === 'bad');
   const [uploading, setUploading] = useState(false);
@@ -3483,7 +3487,7 @@ function PhotoSheet({
       await onAddFiles(files);
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không tải được ảnh');
+      setErr(e.message || t('errPhotoUploadFailed'));
     } finally {
       setUploading(false);
     }
@@ -3498,7 +3502,7 @@ function PhotoSheet({
 
   return (
     <Sheet
-      title={photo ? (viewOnly ? 'Xem ảnh' : 'Chi tiết ảnh') : 'Thêm ảnh'}
+      title={photo ? (viewOnly ? t('photoView') : t('photoDetail')) : t('photoAdd')}
       onClose={onClose}
       className={viewOnly ? 'sheet--photo-viewer' : ''}
     >
@@ -3509,34 +3513,34 @@ function PhotoSheet({
               <div className="photo-modal-viewer">
                 <img
                   src={photo.url}
-                  alt={photo.label || 'Ảnh đính kèm'}
+                  alt={photo.label || t('photoAttachedAlt')}
                   className="photo-modal-img-full"
                 />
                 {photo.kind === 'bad' && (
-                  <span className="photo-modal-badge">Ảnh lỗi</span>
+                  <span className="photo-modal-badge">{t('photoBadBadge')}</span>
                 )}
               </div>
             ) : (
               <div className="photo-modal-img" style={previewStyle}>
                 {photo.kind === 'bad' && (
-                  <span className="photo-modal-badge">Ảnh lỗi</span>
+                  <span className="photo-modal-badge">{t('photoBadBadge')}</span>
                 )}
               </div>
             )}
             {canEditPhotoMeta && (
               <>
                 <div className="field">
-                  <label className="field-label" htmlFor="photo-cap">Ghi chú cho ảnh</label>
+                  <label className="field-label" htmlFor="photo-cap">{t('photoCaption')}</label>
                   <textarea
                     id="photo-cap"
                     value={cap}
                     onChange={(e) => setCap(e.target.value)}
                     rows={3}
-                    placeholder="Mô tả: lỗi gì, ở đâu, cần làm gì…"
+                    placeholder={t('photoCaptionPlaceholder')}
                   />
                 </div>
                 {!showBadToggle && (
-                  <p className="field-note photo-modal-caption">Ghi chú này sẽ hiển thị dưới ảnh trong danh sách.</p>
+                  <p className="field-note photo-modal-caption">{t('photoCaptionNote')}</p>
                 )}
               </>
             )}
@@ -3548,7 +3552,7 @@ function PhotoSheet({
                     checked={isBad}
                     onChange={(e) => setIsBad(e.target.checked)}
                   />
-                  Đánh dấu là ảnh lỗi
+                  {t('photoMarkBad')}
                 </label>
               </>
             )}
@@ -3562,14 +3566,14 @@ function PhotoSheet({
                     onClose();
                   }}
                 >
-                  {viewOnly ? 'Lưu ghi chú' : 'Lưu'}
+                  {viewOnly ? t('saveCaption') : t('save')}
                 </button>
                 {!viewOnly && (
                   <button
                     type="button"
                     className="btn btn-ghost-danger"
                     onClick={() => { onDeletePhoto(); onClose(); }}
-                    aria-label="Xóa ảnh"
+                    aria-label={t('deletePhotoAria')}
                   >
                     <Icon.trash/>
                   </button>
@@ -3586,8 +3590,8 @@ function PhotoSheet({
               onClick={() => fileRef.current?.click()}
             >
               <Icon.cam style={{ width: 32, height: 32, marginBottom: 8, color: 'var(--muted)' }}/>
-              <div className="photo-paste-title">Dán ảnh bằng Ctrl+V</div>
-              <div className="photo-paste-sub">hoặc bấm để chọn file · nhiều ảnh cùng lúc</div>
+              <div className="photo-paste-title">{t('pastePhotoTitle')}</div>
+              <div className="photo-paste-sub">{t('pastePhotoSub')}</div>
             </div>
             <input
               ref={fileRef}
@@ -3607,14 +3611,14 @@ function PhotoSheet({
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
             >
-              Chọn ảnh từ máy
+              {t('choosePhotos')}
             </button>
           </>
         ) : (
-          <p className="field-note">Chỉ công việc / sub-task mới đính kèm ảnh.</p>
+          <p className="field-note">{t('photosOnlyTasks')}</p>
         )}
         {err && <p className="form-error">{err}</p>}
-        {uploading && <p className="field-note">Đang xử lý ảnh…</p>}
+        {uploading && <p className="field-note">{t('processingPhotos')}</p>}
       </div>
     </Sheet>
   );
@@ -3641,9 +3645,10 @@ function DeadlineDateTimeFields({
   onTimeChange,
   currentIso,
 }) {
+  const { t } = useI18n();
   return (
     <div className="field">
-      <span className="field-label">Hạn hoàn thành</span>
+      <span className="field-label">{t('deadlineLabel')}</span>
       <div className="field-datetime-row">
         <input
           id={dateId}
@@ -3651,7 +3656,7 @@ function DeadlineDateTimeFields({
           type="date"
           value={date}
           onChange={(e) => onDateChange(e.target.value)}
-          aria-label="Ngày hoàn thành"
+          aria-label={t('dueDateAria')}
         />
         <input
           id={timeId}
@@ -3660,17 +3665,15 @@ function DeadlineDateTimeFields({
           value={time}
           onChange={(e) => onTimeChange(e.target.value)}
           step={60}
-          aria-label="Giờ hoàn thành"
+          aria-label={t('dueTimeAria')}
         />
       </div>
       <p className="field-note">
-        {time
-          ? 'Ngày và giờ theo múi giờ máy bạn.'
-          : 'Chỉ chọn ngày → mặc định 23:59 cùng ngày.'}
+        {time ? t('tzNote') : t('dateOnlyNote')}
       </p>
       {currentIso && (
         <p className="field-note">
-          Hiện tại: <strong>{formatDeadline(currentIso)}</strong>
+          {t('currentLabel')}: <strong>{formatDeadline(currentIso)}</strong>
         </p>
       )}
     </div>
@@ -3678,6 +3681,7 @@ function DeadlineDateTimeFields({
 }
 
 function DeadlineSheet({ node, onClose, onSave }) {
+  const { t } = useI18n();
   const initial = splitDeadlineForInput(node.deadline);
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
@@ -3691,7 +3695,7 @@ function DeadlineSheet({ node, onClose, onSave }) {
       await onSave(value || null);
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
@@ -3699,21 +3703,21 @@ function DeadlineSheet({ node, onClose, onSave }) {
 
   const handleSave = () => {
     if (!date) {
-      setErr('Chọn ngày hoàn thành.');
+      setErr(t('errPickDueDate'));
       return;
     }
     const iso = combineDeadlineLocal(date, time);
     if (!iso) {
-      setErr('Ngày hoặc giờ không hợp lệ.');
+      setErr(t('errInvalidDateTime'));
       return;
     }
     persist(iso);
   };
 
   return (
-    <Sheet title="Hạn hoàn thành" onClose={onClose}>
+    <Sheet title={t('deadlineLabel')} onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Áp dụng cho" name={node.name} />
+        <SheetHint label={t('appliesTo')} name={node.name} />
         <DeadlineDateTimeFields
           dateId="deadline-date"
           timeId="deadline-time"
@@ -3726,15 +3730,15 @@ function DeadlineSheet({ node, onClose, onSave }) {
         {err && <p className="form-error">{err}</p>}
         <div className="btn-col">
           <button type="button" className="btn btn-primary btn-block" onClick={handleSave} disabled={saving || !date}>
-            {saving ? 'Đang lưu…' : 'Lưu hạn hoàn thành'}
+            {saving ? t('workSaving') : t('saveDeadline')}
           </button>
           {node.deadline && (
             <button type="button" className="btn btn-ghost-danger btn-block" onClick={() => persist(null)} disabled={saving}>
-              Xóa hạn hoàn thành
+              {t('deleteDeadline')}
             </button>
           )}
           <button type="button" className="btn btn-secondary btn-block" onClick={onClose}>
-            Hủy
+            {t('cancel')}
           </button>
         </div>
       </div>
@@ -3743,25 +3747,26 @@ function DeadlineSheet({ node, onClose, onSave }) {
 }
 
 function NoteSheet({ node, onClose, onSave }) {
+  const { t } = useI18n();
   const [val, setVal] = useState(node.note || '');
   return (
-    <Sheet title="Ghi chú chung" onClose={onClose}>
+    <Sheet title={t('generalNote')} onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Áp dụng cho" name={node.name} />
+        <SheetHint label={t('appliesTo')} name={node.name} />
         <div className="field">
-          <label className="field-label" htmlFor="note-text">Nội dung</label>
+          <label className="field-label" htmlFor="note-text">{t('contentLabel')}</label>
           <textarea
             id="note-text"
             value={val}
             onChange={(e) => setVal(e.target.value)}
             rows={6}
-            placeholder="Viết ghi chú, lưu ý, hoặc context cho cả team…"
+            placeholder={t('generalNotePlaceholder')}
             autoFocus
           />
         </div>
         <div className="btn-row">
-          <button type="button" className="btn btn-primary" onClick={() => { onSave(val); onClose(); }}>Lưu</button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+          <button type="button" className="btn btn-primary" onClick={() => { onSave(val); onClose(); }}>{t('save')}</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -3842,6 +3847,7 @@ function normalizeUrl(url) {
 }
 
 function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
+  const { t: translate } = useI18n();
   const [title, setTitle] = useState(doc?.title || '');
   const [url, setUrl] = useState(doc?.url || '');
   const [note, setNote] = useState(doc?.note || '');
@@ -3851,8 +3857,8 @@ function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
   const handleSave = async () => {
     const t = title.trim();
     const u = normalizeUrl(url);
-    if (!t) { setErr('Nhập tiêu đề.'); return; }
-    if (!u) { setErr('Nhập link.'); return; }
+    if (!t) { setErr(translate('errEnterTitle')); return; }
+    if (!u) { setErr(translate('errEnterLink')); return; }
     setErr('');
     setSaving(true);
     try {
@@ -3865,24 +3871,24 @@ function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
       });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || translate('errSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title={doc ? 'Sửa link tài liệu' : 'Thêm link tài liệu'} onClose={onClose}>
+    <Sheet title={doc ? translate('docLinkEdit') : translate('docLinkAdd')} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="doclink-title">Tiêu đề</label>
+          <label className="field-label" htmlFor="doclink-title">{translate('titleLabel')}</label>
           <input
             id="doclink-title"
             className="field-input"
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ví dụ: File yêu cầu, Link drive, Spec…"
+            placeholder={translate('docLinkTitlePlaceholder')}
             autoFocus
           />
         </div>
@@ -3898,20 +3904,20 @@ function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
           />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="doclink-note">Ghi chú</label>
+          <label className="field-label" htmlFor="doclink-note">{translate('workKindNote')}</label>
           <textarea
             id="doclink-note"
             className="field-input"
             rows={3}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Tuỳ chọn…"
+            placeholder={translate('optionalPlaceholder')}
           />
         </div>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>
-            {saving ? 'Đang lưu…' : 'Lưu'}
+            {saving ? translate('workSaving') : translate('save')}
           </button>
           {doc && onDelete && (
             <button
@@ -3921,9 +3927,9 @@ function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
               onClick={async () => {
                 setSaving(true);
                 try { await onDelete(); onClose(); }
-                catch (e) { setErr(e.message || 'Không xóa được'); setSaving(false); }
+                catch (e) { setErr(e.message || translate('errDeleteFailed')); setSaving(false); }
               }}
-              aria-label="Xóa link"
+              aria-label={translate('deleteLinkAria')}
             >
               <Icon.trash/>
             </button>
@@ -3935,6 +3941,7 @@ function DocLinkSheet({ doc, onClose, onSave, onDelete }) {
 }
 
 function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
+  const { t } = useI18n();
   const isFeature = parentNode?._source?.table === 'projects';
   const isTaskLike = parentNode?._source?.table === 'features' || parentNode?._source?.table === 'tasks';
   const startInitial = useMemo(() => currentDateTimeForInput(), []);
@@ -3964,38 +3971,38 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
       });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title={`Thêm ${childLabel}`} onClose={onClose}>
+    <Sheet title={t('addSectionItem', { label: childLabel })} onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Thuộc" name={parentNode?.name} />
+        <SheetHint label={t('belongsTo')} name={parentNode?.name} />
         <div className="field">
-          <label className="field-label" htmlFor="add-child-name">Tên {childLabel}</label>
+          <label className="field-label" htmlFor="add-child-name">{t('childNameLabel', { label: childLabel })}</label>
           <input
             id="add-child-name"
             className="field-input"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={`Nhập tên ${childLabel}…`}
+            placeholder={t('childNamePlaceholder', { label: childLabel })}
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
           />
         </div>
         <DateTimeFields
-          label="Ngày giờ bắt đầu"
+          label={t('startDateTimeLabel')}
           dateId="add-child-started-date"
           timeId="add-child-started-time"
           date={startedDate}
           time={startedTime}
           onDateChange={setStartedDate}
           onTimeChange={setStartedTime}
-          note="Điền sẵn thời điểm hiện tại, có thể chỉnh lại trước khi tạo."
+          note={t('prefillNote')}
         />
         <DeadlineDateTimeFields
           dateId="add-child-deadline-date"
@@ -4006,31 +4013,27 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
           onTimeChange={setDeadlineTime}
         />
         <div className="field">
-          <label className="field-label">Nhân sự phụ trách</label>
+          <label className="field-label">{t('assigneesLabel')}</label>
           {(isTaskLike || isFeature) ? (
             <MultiAssigneePicker
               values={assigneeIds}
               onChange={setAssigneeIds}
-              hint={isFeature
-                ? 'Có thể chọn nhiều người cho cùng một hạng mục.'
-                : 'Có thể chọn nhiều người cho cùng một công việc.'}
+              hint={isFeature ? t('multiHintFeature') : t('multiHintTask')}
             />
           ) : (
             <AssigneePicker
               value={assigneeId}
               onChange={setAssigneeId}
-              hint={isFeature
-                ? 'Tùy chọn — gán phụ trách cho hạng mục.'
-                : 'Tùy chọn — gán trực tiếp cho công việc.'}
+              hint={isFeature ? t('singleHintFeature') : t('singleHintTask')}
             />
           )}
         </div>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Đang lưu…' : 'Tạo mới'}
+            {saving ? t('workSaving') : t('createNew')}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -4038,12 +4041,12 @@ function AddChildSheet({ parentNode, childLabel, onClose, onSave }) {
 }
 
 function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
-  const { locale } = useI18n();
+  const { t } = useI18n();
   const isNew = !person?.id;
   const roleOptions = [
-    { value: 'admin', label: 'Admin' },
-    { value: 'leader', label: locale === 'en' ? 'Leaders' : 'Trưởng nhóm' },
-    { value: 'employee', label: locale === 'en' ? 'Employees' : 'Nhân viên' },
+    { value: 'admin', label: t('roleAdmin') },
+    { value: 'leader', label: t('roleLeader') },
+    { value: 'employee', label: t('roleEmployee') },
   ];
   const normalizeRoleOption = (value) => {
     return personRoleKey(value);
@@ -4085,17 +4088,17 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
       });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được nhân sự');
+      setErr(e.message || t('errSavePersonFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title={isNew ? 'Thêm nhân sự' : 'Sửa nhân sự'} onClose={onClose}>
+    <Sheet title={isNew ? t('addPerson') : t('editPerson')} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="edit-person-name">Tên nhân sự</label>
+          <label className="field-label" htmlFor="edit-person-name">{t('personNameLabel')}</label>
           <input
             id="edit-person-name"
             className="field-input"
@@ -4117,7 +4120,7 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
           />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="edit-person-phone">{locale === 'en' ? 'Phone' : 'SĐT'}</label>
+          <label className="field-label" htmlFor="edit-person-phone">{t('phoneLabel')}</label>
           <input
             id="edit-person-phone"
             className="field-input"
@@ -4134,11 +4137,11 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder={isNew ? 'Password' : (locale === 'en' ? 'Leave blank to keep current password' : 'Để trống nếu không đổi password')}
+            placeholder={isNew ? 'Password' : t('passwordKeepHint')}
           />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="edit-person-role">{locale === 'en' ? 'Role' : 'Vai trò'}</label>
+          <label className="field-label" htmlFor="edit-person-role">{t('roleLabel')}</label>
           <select
             id="edit-person-role"
             className="field-input"
@@ -4153,7 +4156,7 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
         {showAccessRole && (
           <div className="field">
             <label className="field-label" htmlFor="edit-person-access-role">
-              {locale === 'en' ? 'App permission' : 'Quyền ứng dụng'}
+              {t('appPermission')}
             </label>
             <select
               id="edit-person-access-role"
@@ -4161,13 +4164,13 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
               value={accessRole}
               onChange={(e) => setAccessRole(e.target.value)}
             >
-              <option value={ACCESS_ROLE.ADMIN}>Admin — full quyền</option>
+              <option value={ACCESS_ROLE.ADMIN}>{t('adminFull')}</option>
               <option value={ACCESS_ROLE.WORKER}>
-                {locale === 'en' ? 'Worker' : 'Nhân viên — quyền thường'}
+                {t('workerNormal')}
               </option>
             </select>
             <p className="field-note">
-              Admin được sửa trạng thái kể cả khi đã hoàn thành.
+              {t('adminStatusPermNote')}
             </p>
           </div>
         )}
@@ -4179,15 +4182,15 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
             type="text"
             value={dept}
             onChange={(e) => setDept(e.target.value)}
-            placeholder={locale === 'en' ? 'Team' : 'Ví dụ: Kỹ thuật, Kinh doanh...'}
+            placeholder={t('deptPlaceholder')}
           />
         </div>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Đang lưu…' : isNew ? 'Thêm nhân sự' : 'Lưu thay đổi'}
+            {saving ? t('workSaving') : isNew ? t('addPerson') : t('saveChanges')}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -4195,6 +4198,7 @@ function EditPersonSheet({ person, onClose, onSave, showAccessRole = false }) {
 }
 
 function AddProductSheet({ onClose, onSave }) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [deadlineDate, setDeadlineDate] = useState('');
@@ -4216,7 +4220,7 @@ function AddProductSheet({ onClose, onSave }) {
         address: '',
       });
     } catch (e) {
-      setErr(e.message || 'Không lấy được GPS');
+      setErr(e.message || t('errGpsFailed'));
     } finally {
       setLocationLoading(false);
     }
@@ -4230,37 +4234,37 @@ function AddProductSheet({ onClose, onSave }) {
       await onSave({ name, customerName, deadline: deadlineIso, siteLocation });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title="Thêm dự án" onClose={onClose}>
+    <Sheet title={t('addProject')} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="add-product-name">Tên dự án</label>
+          <label className="field-label" htmlFor="add-product-name">{t('projectNameLabel')}</label>
           <input
             id="add-product-name"
             className="field-input"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Nhập tên dự án..."
+            placeholder={t('projectNamePlaceholder')}
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
           />
         </div>
         <div className="field">
-          <label className="field-label" htmlFor="add-product-customer">Khách hàng</label>
+          <label className="field-label" htmlFor="add-product-customer">{t('customerLabel')}</label>
           <input
             id="add-product-customer"
             className="field-input"
             type="text"
             value={customerName}
             onChange={(e) => setCustomerName(e.target.value)}
-            placeholder="Tên khách hàng..."
+            placeholder={t('customerPlaceholder')}
           />
         </div>
         <DeadlineDateTimeFields
@@ -4272,28 +4276,28 @@ function AddProductSheet({ onClose, onSave }) {
           onTimeChange={setDeadlineTime}
         />
         <div className="field">
-          <span className="field-label">Vị trí công trình</span>
+          <span className="field-label">{t('siteLocationLabel')}</span>
           <button
             type="button"
             className="btn btn-secondary btn-block"
             onClick={captureSiteLocation}
             disabled={saving || locationLoading}
           >
-            {locationLoading ? 'Đang lấy GPS...' : siteLocation ? 'Lấy lại vị trí' : 'Lấy vị trí GPS'}
+            {locationLoading ? t('checkInGpsLoading') : siteLocation ? t('retakeLocation') : t('getGpsLocation')}
           </button>
-          <p className="field-note">Bấm nút này khi đang ở công trình để lấy GPS tại nơi bấm.</p>
+          <p className="field-note">{t('gpsCaptureHint')}</p>
           {siteLocation && (
             <p className="field-note">
-              GPS: {formatCoords(siteLocation.lat, siteLocation.lng)} · Bán kính {siteLocation.radiusM}m
+              {t('gpsSummary', { coords: formatCoords(siteLocation.lat, siteLocation.lng), radius: siteLocation.radiusM })}
             </p>
           )}
         </div>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Đang lưu...' : 'Tạo mới'}
+            {saving ? t('workSaving') : t('createNew')}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -4301,6 +4305,7 @@ function AddProductSheet({ onClose, onSave }) {
 }
 
 function ProductGoodsPercentSheet({ product, onClose, onSave }) {
+  const { t } = useI18n();
   const label = nodeLevelLabel(product);
   const [value, setValue] = useState(
     product?.goodsPercent !== null && product?.goodsPercent !== undefined ? String(product.goodsPercent) : ''
@@ -4313,7 +4318,7 @@ function ProductGoodsPercentSheet({ product, onClose, onSave }) {
     const trimmed = value.trim();
     const nextValue = trimmed === '' ? null : Number(trimmed);
     if (nextValue !== null && (!Number.isFinite(nextValue) || nextValue < 0 || nextValue > 100)) {
-      setErr('Nhập tỷ lệ từ 0 đến 100.');
+      setErr(t('errPercentRange'));
       return;
     }
     setSaving(true);
@@ -4321,18 +4326,18 @@ function ProductGoodsPercentSheet({ product, onClose, onSave }) {
       await onSave(nextValue);
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được tỉ lệ hoàn thành');
+      setErr(e.message || t('errSavePercentFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title="Tỉ lệ hoàn thành" onClose={onClose}>
+    <Sheet title={t('goodsPercentTitle')} onClose={onClose}>
       <div className="form-stack">
         <SheetHint label={label.charAt(0).toUpperCase() + label.slice(1)} name={product?.name || ''} />
         <div className="field">
-          <label className="field-label" htmlFor="product-goods-percent">Phần trăm hoàn thành</label>
+          <label className="field-label" htmlFor="product-goods-percent">{t('percentLabel')}</label>
           <div className="percent-input-wrap">
             <input
               id="product-goods-percent"
@@ -4350,14 +4355,14 @@ function ProductGoodsPercentSheet({ product, onClose, onSave }) {
             />
             <span>%</span>
           </div>
-          <p className="field-hint">Để trống nếu muốn xóa tỷ lệ đã nhập.</p>
+          <p className="field-hint">{t('percentHint')}</p>
         </div>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Đang lưu...' : 'Lưu tỷ lệ'}
+            {saving ? t('workSaving') : t('savePercent')}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -4366,12 +4371,12 @@ function ProductGoodsPercentSheet({ product, onClose, onSave }) {
 
 function nodeLevelLabel(node) {
   const table = node?._source?.table;
-  if (table === 'projects') return 'dự án';
-  if (table === 'features') return 'hạng mục';
+  if (table === 'projects') return tGlobal('levelProject').toLowerCase();
+  if (table === 'features') return tGlobal('levelFeature').toLowerCase();
   if (table === 'tasks') {
-    return node._source?.parentTaskId ? 'sub-task' : 'công việc';
+    return node._source?.parentTaskId ? 'sub-task' : tGlobal('levelTask').toLowerCase();
   }
-  return 'mục';
+  return tGlobal('itemFallback');
 }
 
 function resolveEditAssigneeId(node) {
@@ -4385,46 +4390,47 @@ function deleteImpactText(node) {
   if (table === 'tasks') {
     const sub = (node.children || []).length;
     if (sub > 0) {
-      return `Công việc «${node.name}» và ${sub} sub-task bên trong sẽ bị xóa vĩnh viễn.`;
+      return tGlobal('deleteImpactTask', { name: node.name, count: sub });
     }
-    return 'Công việc này sẽ bị xóa vĩnh viễn.';
+    return tGlobal('deleteImpactTaskOnly');
   }
   if (table === 'features') {
     const n = node.children?.length || 0;
-    return `Hạng mục «${node.name}» và ${n} công việc bên trong sẽ bị xóa vĩnh viễn.`;
+    return tGlobal('deleteImpactFeature', { name: node.name, count: n });
   }
   const features = node.children?.length || 0;
   let tasks = 0;
   (node.children || []).forEach((f) => { tasks += (f.children || []).length; });
-  return `Dự án «${node.name}», ${features} hạng mục và ${tasks} công việc sẽ bị xóa vĩnh viễn.`;
+  return tGlobal('deleteImpactProject', { name: node.name, features, tasks });
 }
 
 function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelete, canDelete = true }) {
+  const { t } = useI18n();
   const label = nodeLevelLabel(node);
   const table = node?._source?.table;
   return (
-    <Sheet title="Tùy chọn" onClose={onClose}>
+    <Sheet title={t('options')} onClose={onClose}>
       <div className="form-stack">
       <SheetHint label={label.charAt(0).toUpperCase() + label.slice(1)} name={node.name} />
       <div className="node-actions-list">
         <button type="button" className="node-action-btn" onClick={onView}>
           <Icon.eye />
-          <span>Xem chi tiết {label}</span>
+          <span>{t('viewDetails', { label })}</span>
         </button>
         {(table === 'features' || table === 'projects') && typeof onAddDocLink === 'function' && (
           <button type="button" className="node-action-btn" onClick={onAddDocLink}>
             <Icon.note />
-            <span>Thêm link tài liệu</span>
+            <span>{t('docLinkAdd')}</span>
           </button>
         )}
         <button type="button" className="node-action-btn" onClick={onEdit}>
           <Icon.edit />
-          <span>Sửa {label}</span>
+          <span>{t('editLabel', { label })}</span>
         </button>
         {canDelete && (
           <button type="button" className="node-action-btn danger" onClick={onDelete}>
             <Icon.trash />
-            <span>Xóa {label}</span>
+            <span>{t('deleteLabel', { label })}</span>
           </button>
         )}
       </div>
@@ -4434,18 +4440,19 @@ function NodeActionsSheet({ node, onClose, onView, onAddDocLink, onEdit, onDelet
 }
 
 function PersonActionsSheet({ person, onClose, onEdit, onDelete }) {
+  const { t } = useI18n();
   return (
-    <Sheet title="Tùy chọn nhân sự" onClose={onClose}>
+    <Sheet title={t('personOptions')} onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Nhân sự" name={person.name} />
+        <SheetHint label={t('navPeople')} name={person.name} />
         <div className="node-actions-list">
           <button type="button" className="node-action-btn" onClick={onEdit}>
             <Icon.edit />
-            <span>Sửa nhân sự</span>
+            <span>{t('editPerson')}</span>
           </button>
           <button type="button" className="node-action-btn danger" onClick={onDelete}>
             <Icon.trash />
-            <span>Xóa nhân sự</span>
+            <span>{t('deletePersonTitle')}</span>
           </button>
         </div>
       </div>
@@ -4454,6 +4461,7 @@ function PersonActionsSheet({ person, onClose, onEdit, onDelete }) {
 }
 
 function ConfirmDeletePersonSheet({ person, onClose, onConfirm }) {
+  const { t } = useI18n();
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState('');
 
@@ -4464,25 +4472,25 @@ function ConfirmDeletePersonSheet({ person, onClose, onConfirm }) {
       await onConfirm();
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không xóa được nhân sự');
+      setErr(e.message || t('errDeletePersonFailed'));
     } finally {
       setDeleting(false);
     }
   };
 
   return (
-    <Sheet title="Xóa nhân sự" onClose={onClose}>
+    <Sheet title={t('deletePersonTitle')} onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Nhân sự" name={person.name} />
+        <SheetHint label={t('navPeople')} name={person.name} />
         <p className="field-note">
-          Nhân sự này sẽ bị xóa khỏi danh sách. Các công việc đang gán cho nhân sự này sẽ được gỡ người phụ trách.
+          {t('deletePersonImpact')}
         </p>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-danger" onClick={handleConfirm} disabled={deleting}>
-            {deleting ? 'Đang xóa...' : 'Xóa nhân sự'}
+            {deleting ? t('productsDeleting') : t('deletePersonTitle')}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={deleting}>Hủy</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={deleting}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -4490,6 +4498,7 @@ function ConfirmDeletePersonSheet({ person, onClose, onConfirm }) {
 }
 
 function EditNodeSheet({ node, onClose, onSave, canOverrideStatus = false }) {
+  const { t } = useI18n();
   const label = nodeLevelLabel(node);
   const nodeTable = node?._source?.table;
   const isLeafNode = (node.children || []).length === 0;
@@ -4522,7 +4531,7 @@ function EditNodeSheet({ node, onClose, onSave, canOverrideStatus = false }) {
       });
       setLocationTouched(true);
     } catch (e) {
-      setErr(e.message || 'Không lấy được GPS');
+      setErr(e.message || t('errGpsFailed'));
     } finally {
       setLocationLoading(false);
     }
@@ -4542,17 +4551,17 @@ function EditNodeSheet({ node, onClose, onSave, canOverrideStatus = false }) {
       });
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không lưu được');
+      setErr(e.message || t('errSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Sheet title={`Sửa ${label}`} onClose={onClose}>
+    <Sheet title={t('editLabel', { label })} onClose={onClose}>
       <div className="form-stack">
         <div className="field">
-          <label className="field-label" htmlFor="edit-name">Tên</label>
+          <label className="field-label" htmlFor="edit-name">{t('nameLabel')}</label>
           <input
             id="edit-name"
             className="field-input"
@@ -4569,9 +4578,9 @@ function EditNodeSheet({ node, onClose, onSave, canOverrideStatus = false }) {
               onChange={setStatus}
               disabled={statusLocked}
               note={statusLocked
-                ? 'Trạng thái được tính tự động từ hạng mục và công việc con.'
+                ? t('statusAutoNote')
                 : (canOverrideStatus && !isLeafNode
-                  ? 'Admin: đổi trạng thái thủ công (gỡ hoàn thành nếu chọn khác Đạt).'
+                  ? t('adminStatusNote')
                   : null)}
             />
           </div>
@@ -4587,39 +4596,39 @@ function EditNodeSheet({ node, onClose, onSave, canOverrideStatus = false }) {
         />
         {nodeTable === 'projects' && (
           <div className="field">
-            <span className="field-label">Vị trí công trình</span>
+            <span className="field-label">{t('siteLocationLabel')}</span>
             <button
               type="button"
               className="btn btn-secondary btn-block"
               onClick={captureSiteLocation}
               disabled={saving || locationLoading}
             >
-              {locationLoading ? 'Đang lấy GPS...' : siteLocation ? 'Lấy lại vị trí' : 'Lấy vị trí GPS'}
+              {locationLoading ? t('checkInGpsLoading') : siteLocation ? t('retakeLocation') : t('getGpsLocation')}
             </button>
-            <p className="field-note">Bấm nút này khi đang ở công trình để lấy GPS tại nơi bấm.</p>
+            <p className="field-note">{t('gpsCaptureHint')}</p>
             {siteLocation && (
               <p className="field-note">
-                GPS: {formatCoords(siteLocation.lat, siteLocation.lng)} · Bán kính {siteLocation.radiusM}m
+                {t('gpsSummary', { coords: formatCoords(siteLocation.lat, siteLocation.lng), radius: siteLocation.radiusM })}
               </p>
             )}
           </div>
         )}
         {showAssignee && (
           <div className="field">
-            <label className="field-label">Nhân sự phụ trách</label>
+            <label className="field-label">{t('assigneesLabel')}</label>
             <AssigneePicker
               value={assigneeId}
               onChange={setAssigneeId}
-              hint="Gán trực tiếp cho công việc."
+              hint={t('assignDirectHint')}
             />
           </div>
         )}
         {err && <p className="form-error">{err}</p>}
         <div className="btn-row">
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !name.trim()}>
-            {saving ? 'Đang lưu…' : 'Lưu thay đổi'}
+            {saving ? t('workSaving') : t('saveChanges')}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Hủy</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>{t('cancel')}</button>
         </div>
       </div>
     </Sheet>
@@ -4627,6 +4636,7 @@ function EditNodeSheet({ node, onClose, onSave, canOverrideStatus = false }) {
 }
 
 function ConfirmDeleteSheet({ node, onClose, onConfirm }) {
+  const { t } = useI18n();
   const label = nodeLevelLabel(node);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState('');
@@ -4638,24 +4648,24 @@ function ConfirmDeleteSheet({ node, onClose, onConfirm }) {
       await onConfirm();
       onClose();
     } catch (e) {
-      setErr(e.message || 'Không xóa được');
+      setErr(e.message || t('errDeleteFailed'));
     } finally {
       setDeleting(false);
     }
   };
 
   return (
-    <Sheet title={`Xóa ${label}?`} onClose={onClose}>
+    <Sheet title={t('deleteTitleQ', { label })} onClose={onClose}>
       <div className="form-stack">
         <p className="sheet-hint sheet-hint--body">{deleteImpactText(node)}</p>
-        <p className="field-note">Hành động này không thể hoàn tác.</p>
+        <p className="field-note">{t('irreversible')}</p>
         {err && <p className="form-error">{err}</p>}
         <div className="btn-col">
           <button type="button" className="btn btn-danger btn-block" onClick={handleDelete} disabled={deleting}>
-            {deleting ? 'Đang xóa…' : `Xóa ${label}`}
+            {deleting ? t('productsDeleting') : t('deleteLabel', { label })}
           </button>
           <button type="button" className="btn btn-secondary btn-block" onClick={onClose} disabled={deleting}>
-            Hủy
+            {t('cancel')}
           </button>
         </div>
       </div>
@@ -4664,6 +4674,7 @@ function ConfirmDeleteSheet({ node, onClose, onConfirm }) {
 }
 
 function AssigneeSheet({ node, onClose, onSave }) {
+  const { t } = useI18n();
   // node.assignees now contains names, convert back to IDs for logic
   const assigneeIds = (node.assignees || []).map((name) => {
     const person = PEOPLE.find((p) => p.name === name);
@@ -4678,9 +4689,9 @@ function AssigneeSheet({ node, onClose, onSave }) {
     setSelected(next);
   };
   return (
-    <Sheet title="Giao việc" onClose={onClose}>
+    <Sheet title={t('assignTask')} onClose={onClose}>
       <div className="form-stack">
-        <SheetHint label="Phụ trách" name={node.name} />
+        <SheetHint label={t('inChargeLabel')} name={node.name} />
         <div className="assignee-picker-list">
           {PEOPLE.map((p) => {
             const on = selected.has(p.id);
@@ -4701,7 +4712,7 @@ function AssigneeSheet({ node, onClose, onSave }) {
           })}
         </div>
         <button type="button" className="btn btn-primary btn-block" onClick={() => { onSave([...selected]); onClose(); }}>
-          Lưu ({selected.size})
+          {t('saveCount', { count: selected.size })}
         </button>
       </div>
     </Sheet>
@@ -4723,7 +4734,7 @@ function LoginView({ loading, error, onLogin }) {
     try {
       await onLogin({ phone, password });
     } catch (err) {
-      setLoginError(err.message || 'Không đăng nhập được');
+      setLoginError(err.message || tGlobal('errLoginFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -4860,16 +4871,10 @@ function App({ t: tweakSettings }) {
         setProjectDocLinksSupported(projDocOk !== false);
         setProjectFieldSettingsSupported(fieldOk !== false);
         setAccessRoleSupported(roleOk === true);
-        const flowUserContext = readFlowUserContextFromUrl(location.search);
-        const nextCurrentUserId = resolveCurrentUserId(
-          people,
-          nextProducts,
-          flowUserContext.userId,
-          { ignoreStored: flowUserContext.force },
-        );
+        const storedUserId = readStoredCurrentUserId();
+        const nextCurrentUserId = people.some((p) => p.id === storedUserId) ? storedUserId : null;
         setCurrentUserId(nextCurrentUserId);
         if (!nextCurrentUserId) clearStoredCurrentUserId();
-        else writeStoredCurrentUserId(nextCurrentUserId);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err.message || t('loadError'));
@@ -4880,15 +4885,7 @@ function App({ t: tweakSettings }) {
 
     load();
     return () => { cancelled = true; };
-  }, [location.search]);
-
-  useEffect(() => {
-    const flowUserContext = readFlowUserContextFromUrl(location.search);
-    if (!flowUserContext.force || !flowUserContext.userId || !people.length) return;
-    if (!people.some((p) => p.id === flowUserContext.userId)) return;
-    setCurrentUserId(flowUserContext.userId);
-    writeStoredCurrentUserId(flowUserContext.userId);
-  }, [location.search, people]);
+  }, []);
 
   // helpers walk all products
   function findNodeIn(id, root) {
@@ -4920,7 +4917,7 @@ function App({ t: tweakSettings }) {
       if (target && patchForDb) {
         saveNodePatch(target, patchForDb, people).catch((err) => {
           console.error('[Supabase] Lưu thất bại:', err);
-          window.alert(err.message || 'Không lưu được thay đổi');
+          window.alert(err.message || tGlobal('errSaveChangesFailed'));
         });
       }
       setPathIndex(next);
@@ -4981,16 +4978,12 @@ function App({ t: tweakSettings }) {
     setProjectFieldSettingsSupported(fieldOk !== false);
     setAccessRoleSupported(roleOk === true);
     setCurrentUserId((prev) => {
-      const flowUserContext = readFlowUserContextFromUrl(location.search);
-      const flowUserId = flowUserContext.force && people.some((p) => p.id === flowUserContext.userId)
-        ? flowUserContext.userId
-        : null;
-      const nextCurrentUserId = flowUserId || (people.some((p) => p.id === prev) ? prev : null);
+      const nextCurrentUserId = people.some((p) => p.id === prev) ? prev : null;
       if (nextCurrentUserId) writeStoredCurrentUserId(nextCurrentUserId);
       else clearStoredCurrentUserId();
       return nextCurrentUserId;
     });
-  }, [location.search]);
+  }, []);
 
   const handleLogin = useCallback(async ({ phone, password }) => {
     const session = await authenticatePersonLogin({ phone, password });
@@ -5046,7 +5039,7 @@ function App({ t: tweakSettings }) {
     } else if (targetNode._source.table === 'projects') {
       await saveProjectGoodsPercent(targetNode, percent);
     } else {
-      throw new Error('Chỉ lưu tỉ lệ hoàn thành cho subtask hoặc dự án');
+      throw new Error(tGlobal('errGoodsPercentOnly'));
     }
     updateNode(targetNode.id, (n) => {
       n.goodsPercent = percent === null || percent === undefined ? null : Math.round(Number(percent));
@@ -5069,7 +5062,7 @@ function App({ t: tweakSettings }) {
         n.siteLocation = nextSiteLocation;
       });
     } catch (e) {
-      window.alert(e.message || 'Không lấy được GPS');
+      window.alert(e.message || tGlobal('errGpsFailed'));
     } finally {
       setLocationSavingId(null);
     }
@@ -5169,7 +5162,7 @@ function App({ t: tweakSettings }) {
       });
     } catch (err) {
       console.error('[Supabase] Đổi trạng thái:', err);
-      window.alert(err.message || 'Không đổi được trạng thái');
+      window.alert(err.message || tGlobal('errStatusChangeFailed'));
     }
   }, [currentId, people, products]);
 
@@ -5214,7 +5207,7 @@ function App({ t: tweakSettings }) {
       });
     } catch (err) {
       console.error('[Supabase] Hoàn thành:', err);
-      window.alert(err.message || 'Không ghi nhận được hoàn thành');
+      window.alert(err.message || tGlobal('errCompleteFailed'));
     }
   }, [currentId, products]);
 
@@ -5275,8 +5268,8 @@ function App({ t: tweakSettings }) {
           <div className="loading-company">{APP_NAME}</div>
         </div>
         <div className="loading-status">
-          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>Đang tải dữ liệu…</div>
-          <div style={{ fontSize: 13 }}>Kết nối Supabase</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>{t('loadingData')}</div>
+          <div style={{ fontSize: 13 }}>{t('connectingSupabase')}</div>
         </div>
       </div>
     );
@@ -5286,7 +5279,7 @@ function App({ t: tweakSettings }) {
     return (
       <div className="screen" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
         <div style={{ textAlign: 'center', maxWidth: 280 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent-ink)', marginBottom: 8 }}>Lỗi kết nối</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent-ink)', marginBottom: 8 }}>{t('connectionError')}</div>
           <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>{loadError}</div>
           <button
             onClick={() => window.location.reload()}
@@ -5296,7 +5289,7 @@ function App({ t: tweakSettings }) {
               fontFamily: 'var(--font-body)',
             }}
           >
-            Thử lại
+            {t('retry')}
           </button>
         </div>
       </div>
@@ -5346,7 +5339,7 @@ function App({ t: tweakSettings }) {
     onDeleteDocLink: docLinksSupported
       ? async (doc) => {
           if (!doc) return;
-          const ok = window.confirm('Xoá link tài liệu này?');
+          const ok = window.confirm(tGlobal('confirmDeleteDocLink'));
           if (!ok) return;
           const targetId = doc.sourceNodeId || currentId;
           const targetNode = findNode(targetId);
@@ -5450,7 +5443,7 @@ function App({ t: tweakSettings }) {
       screen = (
         <div className="screen" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
           <div style={{ textAlign: 'center' }}>
-            <p style={{ color: 'var(--muted)', marginBottom: 12 }}>Không tìm thấy mục trong đường dẫn.</p>
+            <p style={{ color: 'var(--muted)', marginBottom: 12 }}>{t('notFoundInPath')}</p>
             <button
               type="button"
               onClick={() => navigate(pathForTab('products', effectiveLayout))}
@@ -5460,7 +5453,7 @@ function App({ t: tweakSettings }) {
                 fontFamily: 'var(--font-body)',
               }}
             >
-              Về /san-pham
+              {t('backToProjects')}
             </button>
           </div>
         </div>
@@ -5538,6 +5531,7 @@ function App({ t: tweakSettings }) {
     || tab === 'schedule' || tab === 'labor' || tab === 'attendance'
     || (tab === 'people' && !personId)
     || (tab === 'me')
+    || (tab === 'settings')
   );
 
   const view = (

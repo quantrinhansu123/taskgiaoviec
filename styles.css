@@ -2263,39 +2263,53 @@ textarea:focus, input:focus { border-color: var(--accent); }
 /* ─── Bottom nav ─── */
 .bottom-nav {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 30;
-  padding: 6px 8px max(10px, env(safe-area-inset-bottom, 0px));
-  background: rgba(255, 255, 255, 0.9);
+  padding: 4px 4px max(8px, env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0;
 }
 .bottom-nav button {
-  background: none; border: 0; padding: 4px 2px;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: 0; padding: 3px 1px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
   color: var(--muted-2); cursor: pointer;
   font-family: var(--font-body);
-  font-size: 10px; font-weight: 700;
-  border-radius: 9px;
+  font-size: 9px; font-weight: 700;
+  line-height: 1.1;
+  border-radius: 8px;
   min-width: 0;
+}
+.bottom-nav button > span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 1px;
 }
 .bottom-nav button.active { color: var(--ink); }
 .bottom-nav button .nav-ico {
   position: relative;
-  width: 26px; height: 24px;
+  width: 22px; height: 20px;
   display: grid; place-items: center;
+}
+.bottom-nav button .nav-ico svg {
+  width: 17px;
+  height: 17px;
 }
 .bottom-nav button.active .nav-ico::before {
-  content:''; position: absolute; inset: 0;
-  background: var(--ink); opacity: 0.05; border-radius: 8px;
+  content:''; position: absolute; inset: -2px;
+  background: var(--ink); opacity: 0.06; border-radius: 7px;
 }
 .bottom-nav button .nav-badge {
-  position: absolute; top: -2px; right: 0;
-  min-width: 14px; height: 14px; padding: 0 4px;
+  position: absolute; top: -3px; right: -4px;
+  min-width: 12px; height: 12px; padding: 0 3px;
   border-radius: 999px; background: var(--bad); color: #fff;
-  font-size: 9px; font-weight: 700;
+  font-size: 8px; font-weight: 700;
   display: grid; place-items: center;
-  border: 2px solid rgba(245, 242, 236, 0.95);
+  border: 1.5px solid rgba(245, 242, 236, 0.95);
 }
 
 /* Adjust scroll padding to leave room for nav */
@@ -3638,9 +3652,25 @@ html.layout-native-mobile .topbar--embedded {
 }
 
 html.layout-native-mobile .bottom-nav {
-  padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
-  padding-left: max(8px, env(safe-area-inset-left, 0px));
-  padding-right: max(8px, env(safe-area-inset-right, 0px));
+  padding: 3px 2px max(8px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(2px, env(safe-area-inset-left, 0px));
+  padding-right: max(2px, env(safe-area-inset-right, 0px));
+}
+
+html.layout-native-mobile .bottom-nav button {
+  font-size: 8.5px;
+  gap: 1px;
+  padding: 2px 0;
+}
+
+html.layout-native-mobile .bottom-nav button .nav-ico {
+  width: 20px;
+  height: 18px;
+}
+
+html.layout-native-mobile .bottom-nav button .nav-ico svg {
+  width: 16px;
+  height: 16px;
 }
 
 html.layout-native-mobile .fab {
@@ -3695,6 +3725,39 @@ html.layout-native-mobile .subtasks-screen .subtasks-filters .field {
   flex: 1 1 100% !important;
   min-width: 0 !important;
   width: 100% !important;
+}
+
+html.layout-native-mobile .subtasks-screen .subtasks-scroll {
+  padding: 12px 14px 96px;
+  overflow-x: hidden;
+}
+
+html.layout-native-mobile .subtasks-screen .subtasks-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+html.layout-native-mobile .subtasks-screen .subtasks-summary-card {
+  min-height: 0;
+  padding: 10px 12px;
+}
+
+html.layout-native-mobile .subtasks-screen .subtasks-summary-card .num {
+  font-size: 20px;
+}
+
+html.layout-native-mobile .subtasks-screen .subtasks-summary-card .lbl {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+html.layout-native-mobile .subtasks-screen .subtasks-table-wrap,
+html.layout-native-mobile .subtasks-screen .subtasks-table,
+html.layout-native-mobile .subtasks-screen .subtasks-table tbody {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0 !important;
 }
 
 /* Preview điện thoại trên PC (khung iOS) */
@@ -4538,7 +4601,10 @@ button,
     padding: 14px 16px 96px;
   }
 
-  .subtasks-summary,
+  .subtasks-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .subtasks-filters {
     grid-template-columns: 1fr;
   }
@@ -4635,7 +4701,92 @@ button,
   }
 
   .product-list {
-    padding-top: 10px;
+    padding: 10px 12px 104px;
+  }
+
+  html.layout-native-mobile .home-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  html.layout-native-mobile .home-stats .s {
+    min-width: 0;
+  }
+
+  html.layout-native-mobile .home-stats .s .l {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  html.layout-native-mobile .home-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    overflow: visible;
+  }
+
+  html.layout-native-mobile .home-tab {
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    margin-right: 0;
+    padding-left: 2px;
+    padding-right: 2px;
+    font-size: 12px;
+  }
+
+  html.layout-native-mobile .home-tab.active::after {
+    left: 4px;
+    right: 4px;
+  }
+
+  html.layout-native-mobile .product-list .product-card {
+    width: 100%;
+    min-width: 0;
+    padding: 14px !important;
+  }
+
+  html.layout-native-mobile .product-card .pc-row1 {
+    align-items: flex-start;
+  }
+
+  html.layout-native-mobile .product-card .pc-foot {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  html.layout-native-mobile .product-card .pc-counts,
+  html.layout-native-mobile .product-card .pc-progress-row {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+  }
+
+  html.layout-native-mobile .product-card .pc-counts {
+    overflow: visible;
+  }
+
+  html.layout-native-mobile .product-card .product-card-complete-btn {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  html.layout-native-mobile .product-card .product-card-location-btn {
+    grid-column: 2;
+    justify-self: end;
+    max-width: min(118px, 40vw);
+  }
+
+  html.layout-native-mobile .product-add-fab {
+    width: 48px;
+    min-width: 48px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  html.layout-native-mobile .product-add-fab-label {
+    display: none;
   }
 
   .subtasks-topbar {
@@ -4654,16 +4805,22 @@ button,
 
   .subtasks-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 8px;
+    margin-bottom: 12px;
   }
 
   .subtasks-summary-card {
-    padding: 12px;
-    min-height: 82px;
+    padding: 10px 12px;
+    min-height: 0;
   }
 
   .subtasks-summary-card .num {
-    font-size: 23px;
+    font-size: 20px;
+  }
+
+  .subtasks-summary-card .lbl {
+    font-size: 11px;
+    line-height: 1.25;
   }
 
   .subtasks-filters {
@@ -4676,10 +4833,14 @@ button,
     border: 0;
     background: transparent;
     overflow: visible;
+    width: 100%;
+    max-width: 100%;
   }
 
   .subtasks-table {
-    min-width: 0;
+    min-width: 0 !important;
+    width: 100%;
+    max-width: 100%;
     border-collapse: separate;
     border-spacing: 0 10px;
   }
@@ -4694,14 +4855,16 @@ button,
   .subtasks-table td {
     display: block;
     width: 100%;
+    max-width: 100%;
   }
 
   .subtasks-table tbody tr {
     background: #fff;
     border: 1px solid var(--line);
     border-radius: 14px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     box-shadow: 0 1px 2px rgba(0,0,0,.03);
+    box-sizing: border-box;
   }
 
   .subtasks-table td {
@@ -4736,16 +4899,24 @@ button,
 
   .subtasks-table .subtasks-card-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 3px 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "project deadline"
+      "title title"
+      "status progress";
+    gap: 8px 10px;
     align-items: center;
-    border-radius: 12px;
-    padding: 6px 8px;
+    border-radius: 14px;
+    padding: 12px 14px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .subtasks-table .subtasks-card-row td {
     display: block;
     width: auto;
+    max-width: 100%;
     padding: 0;
     min-width: 0;
   }
@@ -4755,9 +4926,8 @@ button,
   }
 
   .subtasks-card-project {
-    grid-column: 1 / 2;
-    grid-row: 1;
-    font-size: 10px;
+    grid-area: project;
+    font-size: 11px;
     color: var(--muted);
     font-weight: 700;
     white-space: nowrap;
@@ -4775,16 +4945,18 @@ button,
   }
 
   .subtasks-card-subtask {
-    grid-column: 1 / 2;
-    grid-row: 2;
+    grid-area: title;
+    min-width: 0;
   }
 
   .subtasks-card-subtask .subtasks-table-title {
-    font-size: 14px;
-    line-height: 1.15;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 15px;
+    line-height: 1.25;
+    font-weight: 700;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
   }
 
   .subtasks-card-subtask .subtasks-table-sub {
@@ -4792,60 +4964,85 @@ button,
   }
 
   .subtasks-card-deadline {
-    grid-column: 2 / 4;
-    grid-row: 1;
+    grid-area: deadline;
     justify-self: end;
-    max-width: 152px;
+    max-width: min(46vw, 160px);
   }
 
   .subtasks-card-deadline .chip {
-    height: 18px;
-    padding: 0 6px;
-    font-size: 10px;
-    gap: 3px;
-    max-width: 152px;
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+    gap: 4px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .subtasks-card-status {
-    grid-column: 2;
-    grid-row: 2;
-    justify-self: end;
+    grid-area: status;
+    justify-self: start;
   }
 
   .subtasks-card-status .chip {
-    height: 18px;
-    padding: 0 6px;
-    font-size: 10px;
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
   }
 
   .subtasks-card-progress {
-    grid-column: 3;
-    grid-row: 2;
-    width: 76px !important;
+    grid-area: progress;
+    justify-self: end;
+    width: auto !important;
+    max-width: min(52vw, 180px);
   }
 
   .subtasks-card-progress .task-progress-cell {
     display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    width: 100%;
   }
 
   .subtasks-card-progress .task-progress-text {
-    font-size: 11px;
-    min-width: 24px;
+    font-size: 13px;
+    font-weight: 800;
+    min-width: 2.5em;
+    text-align: right;
     order: 2;
+    flex-shrink: 0;
   }
 
   .subtasks-card-progress .task-progress-track {
-    flex: 1;
-    height: 4px;
+    flex: 1 1 56px;
+    min-width: 40px;
+    height: 5px;
     order: 1;
   }
 
   .subtasks-card-progress .subtasks-table-sub {
     display: none;
+  }
+
+  .subtasks-card-progress .subtasks-percent-btn {
+    order: 3;
+    margin-top: 0;
+    flex-shrink: 0;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+    font-size: 0;
+    line-height: 0;
+  }
+
+  .subtasks-card-progress .subtasks-percent-btn svg {
+    width: 14px;
+    height: 14px;
   }
 }
 
@@ -6296,6 +6493,206 @@ html.layout-desktop .attendance-embed-frame {
   justify-content: space-between;
   font-size: 13px;
   color: var(--muted);
+}
+
+.me-settings-wrap {
+  padding: 0 16px 14px;
+}
+
+.me-settings-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.me-settings-entry-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--ink);
+}
+
+.me-settings-entry-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.me-settings-entry-text strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.me-settings-entry-text span {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.me-settings-entry-chevron {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted-2);
+  font-weight: 400;
+}
+
+@media (max-width: 640px) {
+  html.layout-native-mobile .screen--me .person-hero {
+    padding: 4px 12px 12px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .av-hero {
+    width: 64px;
+    height: 64px;
+    margin: 4px auto 8px;
+    font-size: 22px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .av-hero .presence {
+    width: 15px;
+    height: 15px;
+    right: 2px;
+    bottom: 2px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero h1 {
+    font-size: 20px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .p-role-2 {
+    margin-bottom: 10px;
+    font-size: 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .p-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .p-summary .s {
+    min-width: 0;
+    padding: 8px 4px;
+    border-radius: 10px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .p-summary .s .n {
+    font-size: 16px;
+  }
+
+  html.layout-native-mobile .screen--me .person-hero .p-summary .s .l {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+  }
+
+  html.layout-native-mobile .screen--me .me-settings-wrap {
+    padding: 0 12px 12px;
+  }
+
+  html.layout-native-mobile .screen--me .me-settings-entry {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  html.layout-native-mobile .screen--me .me-settings-entry-text span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  html.layout-native-mobile .screen--me .person-work-section {
+    padding: 4px 12px 8px !important;
+  }
+
+  html.layout-native-mobile .screen--me .my-status-filter {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+  }
+
+  html.layout-native-mobile .screen--me .my-status-filter-btn {
+    width: 100%;
+    min-width: 0;
+    min-height: 32px;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
+  html.layout-native-mobile .screen--me .my-status-filter-btn span {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 10px;
+  }
+
+  html.layout-native-mobile .screen--me .subtask-report-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 0;
+  }
+
+  html.layout-native-mobile .screen--me .subtask-report-toolbar .btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  html.layout-native-mobile .screen--me .my-kanban-board-wrap {
+    overflow: visible;
+    padding: 0 12px 110px !important;
+  }
+
+  html.layout-native-mobile .screen--me .my-kanban-board {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  html.layout-native-mobile .screen--me .my-kanban-column {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    min-height: 0;
+    padding: 8px;
+  }
+
+  html.layout-native-mobile .screen--me .task-item-stack {
+    width: 100%;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  html.layout-native-mobile .screen--me .task-item-stack .status-blob,
+  html.layout-native-mobile .screen--me .task-item-stack .subtask-select {
+    margin-top: 3px;
+  }
+
+  html.layout-native-mobile .screen--me .task-item-stack .meta {
+    flex-wrap: wrap;
+  }
 }
 
 .hero-assignee .icon-btn--sm {

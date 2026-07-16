@@ -14,6 +14,7 @@ import {
 } from '../lib/teams.js';
 import { aggregate } from '../lib/data.js';
 import { currentLocalDateTimeForInput, formatScheduleRange } from '../lib/deadline.js';
+import { useI18n, tGlobal } from '../lib/i18n.jsx';
 
 function taskProgress(node) {
   if (!node) return 0;
@@ -88,7 +89,7 @@ function PersonalBar({ bar, span, color, lane, onOpenNode }) {
         '--bar-fill': `${isDone ? 100 : progress}%`,
         '--bar-lane': lane,
       }}
-      title={`${bar.taskName}\n${bar.projectName}\n${formatScheduleRange(bar.startAt, bar.endAt) || `${bar.startDate} -> ${bar.endDate}`}\nTiến độ: ${progress}%`}
+      title={`${bar.taskName}\n${bar.projectName}\n${formatScheduleRange(bar.startAt, bar.endAt) || `${bar.startDate} -> ${bar.endDate}`}\n${tGlobal('progress')}: ${progress}%`}
       onClick={() => onOpenNode?.(bar.node)}
     >
       <div className="gantt-chart-bar-track" aria-hidden>
@@ -103,6 +104,7 @@ function PersonalBar({ bar, span, color, lane, onOpenNode }) {
 }
 
 export function PersonalScheduleView({ products, people, embedded = false, onOpenNode, showControls = true }) {
+  const { t } = useI18n();
   const [viewMode, setViewMode] = useState('month');
   const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [personFilter, setPersonFilter] = useState('');
@@ -126,7 +128,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
         days.push(cur);
         cur = addDays(cur, 1);
       }
-      return { rangeStart: start, rangeEnd: end, columns: days, timelineLabel: 'Tuần' };
+      return { rangeStart: start, rangeEnd: end, columns: days, timelineLabel: tGlobal('weekShort') };
     }
     const start = monthStart(anchorDate);
     const end = monthEnd(anchorDate);
@@ -178,9 +180,9 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
       {showControls && (
       <div className="gantt-toolbar">
         <div className="gantt-toolbar-group gantt-toolbar-nav">
-          <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(-1)} aria-label="Trước">←</button>
-          <button type="button" className="gantt-tool-btn" onClick={() => setAnchorDate(new Date())}>Hôm nay</button>
-          <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(1)} aria-label="Sau">→</button>
+          <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(-1)} aria-label={t('prevAria')}>←</button>
+          <button type="button" className="gantt-tool-btn" onClick={() => setAnchorDate(new Date())}>{t('today')}</button>
+          <button type="button" className="gantt-tool-btn" onClick={() => shiftRange(1)} aria-label={t('nextAria')}>→</button>
           <span className="gantt-period-label">{timelineLabel}</span>
         </div>
         <div className="gantt-toolbar-group gantt-view-switcher">
@@ -191,7 +193,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
               className={`gantt-tool-btn ${viewMode === mode ? 'active' : ''}`}
               onClick={() => setViewMode(mode)}
             >
-              {mode === 'week' ? 'Tuần' : mode === 'month' ? 'Tháng' : 'Năm'}
+              {mode === 'week' ? t('weekShort') : mode === 'month' ? t('monthShort') : t('yearShort')}
             </button>
           ))}
         </div>
@@ -201,7 +203,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
             value={personFilter}
             onChange={(e) => setPersonFilter(e.target.value)}
           >
-            <option value="">Tất cả nhân sự</option>
+            <option value="">{t('allPeople')}</option>
             {personal.people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -209,14 +211,14 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
       )}
 
       <div className="gantt-panel">
-        <h2 className="gantt-panel-title">LỊCH THEO CÔNG CÁ NHÂN</h2>
+        <h2 className="gantt-panel-title">{t('personalScheduleTitle')}</h2>
         <div className="gantt-table-wrap personal-gantt-wrap">
           <table className="gantt-table personal-gantt-table" style={{ '--gantt-cols': columns.length }}>
             <thead>
               <tr>
-                <th className="gantt-th-rowhead">Nhân sự</th>
+                <th className="gantt-th-rowhead">{t('navPeople')}</th>
                 <th className="gantt-th-timeline" colSpan={columns.length}>
-                  {viewMode === 'year' ? 'Tháng' : viewMode === 'month' ? 'Ngày' : 'Tuần'}
+                  {viewMode === 'year' ? t('monthShort') : viewMode === 'month' ? t('dayShort') : t('weekShort')}
                 </th>
               </tr>
               <tr>
@@ -264,7 +266,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
                           />
                         ))}
                         {visible.length === 0 && (
-                          <span className="gantt-empty-row">Trống lịch</span>
+                          <span className="gantt-empty-row">{t('emptyScheduleCell')}</span>
                         )}
                       </div>
                     </td>
@@ -273,7 +275,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
               })}
               {displayRows.length === 0 && (
                 <tr className="gantt-tr">
-                  <td className="gantt-td-team">Không có công việc</td>
+                  <td className="gantt-td-team">{t('noWorkRow')}</td>
                   <td className="gantt-td-chart" colSpan={columns.length}>
                     <div
                       className="gantt-chart-row"
@@ -282,7 +284,7 @@ export function PersonalScheduleView({ products, people, embedded = false, onOpe
                       {columns.map((col) => (
                         <div key={col} className="gantt-chart-cell" />
                       ))}
-                      <span className="gantt-empty-row">Trống lịch</span>
+                      <span className="gantt-empty-row">{t('emptyScheduleCell')}</span>
                     </div>
                   </td>
                 </tr>
