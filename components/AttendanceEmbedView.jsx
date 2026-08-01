@@ -7,9 +7,13 @@ function buildAttendanceUrl(person, currentUserId) {
   if (!person && !currentUserId) return ATTENDANCE_URL;
 
   const url = new URL(ATTENDANCE_URL);
-  const employeeName = person?.name || person?.email || currentUserId;
+  const employeeName = person?.name || person?.email || '';
+  const userId = person?.id || currentUserId || '';
+  const phone = String(person?.phone || '').trim();
 
   if (employeeName) url.searchParams.set('name', employeeName);
+  if (userId) url.searchParams.set('userId', userId);
+  if (phone) url.searchParams.set('phone', phone);
 
   return url.toString();
 }
