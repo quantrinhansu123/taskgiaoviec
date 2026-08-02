@@ -89,6 +89,7 @@ import { SiteLocationSheet, TeamScheduleSheet, ProjectStartedAtSheet } from './c
 import { FieldOpsScreen } from './components/FieldOpsScreen.jsx';
 import { DateTimeFields } from './components/DateTimeFields.jsx';
 import { AttendanceEmbedView } from './components/AttendanceEmbedView.jsx';
+import { AttendanceListEmbedView } from './components/AttendanceListEmbedView.jsx';
 import {
   PEOPLE,
   setPeople as setGlobalPeople,
@@ -5394,6 +5395,14 @@ function App({ t: tweakSettings }) {
   let screen;
   if (tab === 'attendance') {
     screen = <AttendanceEmbedView person={currentPerson} currentUserId={currentUserId} />;
+  } else if (tab === 'attendanceList') {
+    screen = (
+      <AttendanceListEmbedView
+        person={currentPerson}
+        currentUserId={currentUserId}
+        accessRole={accessRole}
+      />
+    );
   } else if (tab === 'schedule' || tab === 'labor') {
     screen = (
       <FieldOpsScreen

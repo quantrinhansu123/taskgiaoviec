@@ -20,6 +20,8 @@ createRoot(document.getElementById('root')).render(
       <Route path="/desktop/bao-cao-gio" element={<Root />} />
       <Route path="/desktop/cham-cong" element={<Root />} />
       <Route path="/desktop/attendance" element={<Root />} />
+      <Route path="/desktop/attendance-list" element={<Root />} />
+      <Route path="/desktop/danh-sach-cham-cong" element={<Root />} />
       <Route path="/desktop/toi" element={<Root />} />
       <Route path="/may-tinh" element={<Navigate to="/desktop/san-pham" replace />} />
       <Route path="/may-tinh/*" element={<Root />} />
@@ -35,6 +37,8 @@ createRoot(document.getElementById('root')).render(
       <Route path="/schedule" element={<Root />} />
       <Route path="/labor" element={<Root />} />
       <Route path="/attendance" element={<Root />} />
+      <Route path="/attendance-list" element={<Root />} />
+      <Route path="/danh-sach-cham-cong" element={<Root />} />
       <Route path="/toi" element={<Root />} />
       <Route path="/me" element={<Root />} />
       <Route path="/cai-dat" element={<Root />} />

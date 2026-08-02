@@ -31,6 +31,12 @@ const NAV_ICONS = {
       <path d="M8 8h8M8 12h4M8 16h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
     </svg>
   ),
+  attendanceList: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+      <rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" strokeWidth="1.8"/>
+      <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+    </svg>
+  ),
   people: (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8"/>
@@ -64,6 +70,7 @@ export function DesktopShell({ children, alertCount = 0, onLogout }) {
     { id: 'subtasks', label: t('navSubtasks'), icon: NAV_ICONS.subtasks },
     { id: 'schedule', label: t('navSchedule'), icon: NAV_ICONS.schedule },
     { id: 'attendance', label: t('navAttendance'), icon: NAV_ICONS.attendance },
+    { id: 'attendanceList', label: t('navAttendanceList'), icon: NAV_ICONS.attendanceList },
     { id: 'people', label: t('navPeople'), icon: NAV_ICONS.people },
     { id: 'me', label: t('navMe'), icon: NAV_ICONS.me, badge: alertCount },
     { id: 'settings', label: t('navSettings'), icon: NAV_ICONS.settings },
